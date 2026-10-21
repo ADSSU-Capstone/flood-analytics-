@@ -21,7 +21,6 @@ CONFIG = {
     "infra_col": "Damage Infrastructure",
     "agri_col": "Damage Agriculture",
     "month_col": "Month",
-    "year_col": "Year",
     "sheet_index": 0,
 }
 
@@ -136,7 +135,6 @@ with tab3:
     st.header("K-Means Clustering (Flood Profiles)")
     st.write("Groups similar flood events to identify distinct risk profiles.")
     try:
-        # Drop NaNs specifically for clustering to prevent the math engine from freezing
         cluster_cols = ["water_level_num", "families_num", "damage_infra_num", "damage_agri_num"]
         cdf = df.dropna(subset=cluster_cols).copy()
         
@@ -166,7 +164,6 @@ with tab4:
         model_cols = ["water_level_num", "families_num", "damage_infra_num", "damage_agri_num"]
         mdf = df.dropna(subset=model_cols).copy()
         
-        # Convert to pure Python lists/float arrays to bypass scikit-learn Cython bugs
         Xm = np.array(mdf[model_cols].values, dtype=float)
         ym = np.array(mdf["severity"].values, dtype=str)
         
@@ -190,7 +187,6 @@ with tab5:
     st.write("Generates 'If-Then' rules based on historical data to guide preparedness.")
     
     try:
-        # Simplified, highly optimized pure-python Apriori
         adf = df.dropna(subset=["severity"]).copy()
         transactions = []
         for _, row in adf.iterrows():
@@ -199,9 +195,8 @@ with tab5:
             
         rules = []
         n = len(transactions)
-        
-        # Only check 2-item combinations to prevent cloud server timeout
         all_items = set(item for t in transactions for item in t)
+        
         for item1, item2 in combinations(all_items, 2):
             count_both = sum(1 for t in transactions if item1 in t and item2 in t)
             count_1 = sum(1 for t in transactions if item1 in t)
@@ -218,7 +213,7 @@ with tab5:
         rules.sort(key=lambda x: float(x["Confidence"].replace('%','')), reverse=True)
         
         if rules:
-            st.dataframe(pd.DataFrame(rules[:15]), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rules[:15]), hide_index=True)
         else:
             st.info("No strong rules met the thresholds.")
             
