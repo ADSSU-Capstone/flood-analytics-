@@ -15,7 +15,7 @@ from mlxtend.frequent_patterns import apriori, association_rules
 st.set_page_config(layout="wide", page_title="Flood Records Analysis")
 
 CONFIG = {
-    "file_path": "flood_data.xlsx", # Make sure this matches your exact filename in GitHub
+    "file_path": "FloodData.xlsx", # Make sure this matches your exact filename in GitHub
     "barangay_col": "Barangay",
     "cause_col": "Flood Cause",
     "water_col": "Water Level",
