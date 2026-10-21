@@ -5,6 +5,8 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
+import plotly.express as px
+import plotly.graph_objects as go
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.tree import DecisionTreeClassifier
@@ -12,10 +14,37 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, silhouette_score
 from mlxtend.frequent_patterns import apriori, association_rules
 
-st.set_page_config(layout="wide", page_title="Flood Records Analysis")
+st.set_page_config(layout="wide", page_title="Flood Records Analysis", page_icon="🌊")
+
+# Custom CSS for a modern look
+st.markdown("""
+    <style>
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: #f0f2f6;
+        border-radius: 5px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        padding-left: 20px;
+        padding-right: 20px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #1f77b4;
+        color: white;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 2rem;
+        color: #1f77b4;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 CONFIG = {
-    "file_path": "FloodData.xlsx", # Make sure this matches your exact filename in GitHub
+    "file_path": "FloodData.xlsx", 
     "barangay_col": "Barangay",
     "cause_col": "Flood Cause",
     "water_col": "Water Level",
@@ -187,15 +216,25 @@ def load_and_clean(file_path):
     df["year_month"] = df["year_num"].astype("Int64").astype(str) + "-" + df["month_num"].astype("Int64").astype(str).str.zfill(2)
     return df
 
-# Load the data automatically
 try:
     df = load_and_clean(CONFIG["file_path"])
 except FileNotFoundError:
-    st.error(f"Data file not found. Please ensure '{CONFIG['file_path']}' is uploaded to the same folder as app.py in your GitHub repository.")
+    st.error(f"Data file not found. Please ensure '{CONFIG['file_path']}' is uploaded to the same folder as app.py.")
     st.stop()
 
-st.title("Flood Records Dashboard")
+# Sidebar
+with st.sidebar:
+    st.title("🌊 Flood Dashboard")
+    st.markdown("Automated Data Mining Analysis")
+    st.divider()
+    
+    total = len(df)
+    st.metric("Total Flood Records", f"{total:,}")
+    st.metric("Affected Barangays", df[CONFIG["barangay_col"]].nunique())
+    st.metric("Families Affected", f"{int(df['families_num'].sum(skipna=True)):,}")
+    st.metric("Total Damage", f"₱{int(df['damage_total_num'].sum(skipna=True)):,}")
 
+# Main Area Tabs
 tabs = st.tabs([
     "Overview",
     "Seasonality & Weather",
@@ -205,78 +244,61 @@ tabs = st.tabs([
     "Decision Support",
 ])
 
+# Color Palette
+SEV_COLORS = {"Low": "#2ca02c", "Moderate": "#ff7f0e", "High": "#d62728"}
+
 with tabs[0]:
-    total = len(df)
-    st.metric("Total flood records", f"{total:,}")
-    st.metric("Barangays affected", df[CONFIG["barangay_col"]].nunique())
-    st.metric("Weather systems recorded", df[CONFIG["cause_col"]].nunique())
-    st.metric("Total families affected", f"{int(df['families_num'].sum(skipna=True)):,}")
-    st.metric("Total damage (PHP)", f"{int(df['damage_total_num'].sum(skipna=True)):,}")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Records by Barangay")
+        bc = df[CONFIG["barangay_col"]].value_counts().reset_index()
+        bc.columns = ["Barangay", "Records"]
+        fig_bar = px.bar(bc, x="Barangay", y="Records", color="Records", 
+                         color_continuous_scale="Blues", template="plotly_white")
+        st.plotly_chart(fig_bar, use_container_width=True)
 
-    st.subheader("Records by barangay")
-    bc = df[CONFIG["barangay_col"]].value_counts()
-    st.dataframe(bc.rename_axis("Barangay").reset_index(name="Records"), use_container_width=True)
-    fig, ax = plt.subplots(figsize=(8, 4))
-    bc.plot(kind="bar", ax=ax, color="steelblue")
-    ax.set_xlabel("Barangay")
-    ax.set_ylabel("Records")
-    st.pyplot(fig)
-
-    st.subheader("Severity distribution")
-    sev = df["severity"].value_counts().reindex(["Low", "Moderate", "High"]).fillna(0).astype(int)
-    st.dataframe(sev.rename_axis("Severity").reset_index(name="Records"), use_container_width=True)
-    fig2, ax2 = plt.subplots(figsize=(6, 3))
-    sev.plot(kind="bar", ax=ax2, color=["#4caf50", "#ff9800", "#f44336"])
-    ax2.set_ylabel("Records")
-    st.pyplot(fig2)
-    high_pct = (sev.get("High", 0) / max(total, 1)) * 100
-    st.write(f"High-severity events account for {high_pct:.1f}% of records.")
+    with col2:
+        st.subheader("Severity Distribution")
+        sev = df["severity"].value_counts().reindex(["Low", "Moderate", "High"]).fillna(0).astype(int).reset_index()
+        sev.columns = ["Severity", "Records"]
+        fig_pie = px.pie(sev, names="Severity", values="Records", 
+                         color="Severity", color_discrete_map=SEV_COLORS, hole=0.4)
+        st.plotly_chart(fig_pie, use_container_width=True)
+        high_pct = (sev[sev["Severity"]=="High"]["Records"].sum() / max(total, 1)) * 100
+        st.info(f"High-severity events account for **{high_pct:.1f}%** of all records.")
 
 with tabs[1]:
-    st.subheader("Records by month")
-    mcount = df["month_num"].dropna().astype(int).value_counts().sort_index()
-    mcount.index = [pd.Timestamp(2024, m, 1).strftime("%B") for m in mcount.index]
-    st.dataframe(mcount.rename_axis("Month").reset_index(name="Records"), use_container_width=True)
-    fig3, ax3 = plt.subplots(figsize=(10, 4))
-    mcount.plot(kind="bar", ax=ax3, color="teal")
-    ax3.set_ylabel("Records")
-    st.pyplot(fig3)
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("Records by Month")
+        mcount = df["month_num"].dropna().astype(int).value_counts().sort_index().reset_index()
+        mcount.columns = ["Month_Num", "Records"]
+        mcount["Month"] = mcount["Month_Num"].apply(lambda m: pd.Timestamp(2024, m, 1).strftime("%B"))
+        fig_month = px.bar(mcount, x="Month", y="Records", color_discrete_sequence=["#17becf"], template="plotly_white")
+        st.plotly_chart(fig_month, use_container_width=True)
 
-    st.subheader("Records by year")
-    ycount = df["year_num"].dropna().astype(int).value_counts().sort_index()
-    st.dataframe(ycount.rename_axis("Year").reset_index(name="Records"), use_container_width=True)
-    fig4, ax4 = plt.subplots(figsize=(8, 4))
-    ycount.plot(kind="bar", ax=ax4, color="darkorange")
-    ax4.set_ylabel("Records")
-    st.pyplot(fig4)
+    with col2:
+        st.subheader("Weather System Frequency")
+        wcount = df[CONFIG["cause_col"]].value_counts().reset_index()
+        wcount.columns = ["Weather System", "Records"]
+        fig_weather = px.bar(wcount, x="Weather System", y="Records", color_discrete_sequence=["#9467bd"], template="plotly_white")
+        st.plotly_chart(fig_weather, use_container_width=True)
 
-    st.subheader("Weather system frequency")
-    wcount = df[CONFIG["cause_col"]].value_counts()
-    st.dataframe(wcount.rename_axis("Weather System").reset_index(name="Records"), use_container_width=True)
-    fig5, ax5 = plt.subplots(figsize=(8, 4))
-    wcount.plot(kind="bar", ax=ax5, color="slateblue")
-    ax5.set_ylabel("Records")
-    st.pyplot(fig5)
+    st.subheader("Records by Year")
+    ycount = df["year_num"].dropna().astype(int).value_counts().sort_index().reset_index()
+    ycount.columns = ["Year", "Records"]
+    fig_year = px.line(ycount, x="Year", y="Records", markers=True, template="plotly_white")
+    st.plotly_chart(fig_year, use_container_width=True)
 
-    st.subheader("Weather system by severity")
-    ct = pd.crosstab(df[CONFIG["cause_col"]], df["severity"])
-    st.dataframe(ct, use_container_width=True)
-    fig6, ax6 = plt.subplots(figsize=(10, 5))
-    ct.plot(kind="bar", stacked=True, ax=ax6, color=["#4caf50", "#ff9800", "#f44336"])
-    ax6.set_ylabel("Records")
-    st.pyplot(fig6)
-
-    st.subheader("Monthly severity composition")
-    sev_month = df.dropna(subset=["month_num"]).assign(
-        month_name=lambda d: d["month_num"].astype(int).apply(lambda m: pd.Timestamp(2024, m, 1).strftime("%B"))
-    )
-    ct2 = pd.crosstab(sev_month["month_name"], sev_month["severity"])
-    month_order = [pd.Timestamp(2024, m, 1).strftime("%B") for m in range(1, 13)]
-    ct2 = ct2.reindex(month_order).fillna(0).astype(int)
-    st.dataframe(ct2, use_container_width=True)
+    with st.expander("View Detailed Crosstab Data"):
+        st.write("**Weather System by Severity**")
+        ct = pd.crosstab(df[CONFIG["cause_col"]], df["severity"])
+        st.dataframe(ct, use_container_width=True)
 
 with tabs[2]:
-    st.subheader("K-Means clustering of flood events")
+    st.subheader("K-Means Clustering of Flood Events")
     num_cols = ["water_level_num", "families_num", "damage_infra_num", "damage_agri_num"]
     feat = df[num_cols].copy()
     feat = feat.fillna(feat.median(numeric_only=True))
@@ -302,75 +324,86 @@ with tabs[2]:
             
     best_idx = int(np.nanargmax(sil_scores))
     best_k = k_range[best_idx]
-    st.write(f"Best k by silhouette coefficient: {best_k} (silhouette = {sil_scores[best_idx]:.3f})")
-    elbow_df = pd.DataFrame({"k": k_range, "WSS": inertias, "Silhouette": sil_scores})
-    st.dataframe(elbow_df, use_container_width=True)
-    fig7, (ax7a, ax7b) = plt.subplots(1, 2, figsize=(12, 4))
-    ax7a.plot(k_range, inertias, marker="o")
-    ax7a.set_xlabel("k")
-    ax7a.set_ylabel("WSS")
-    ax7a.set_title("Elbow")
-    ax7b.plot(k_range, sil_scores, marker="o", color="green")
-    ax7b.set_xlabel("k")
-    ax7b.set_ylabel("Silhouette")
-    ax7b.set_title("Silhouette")
-    st.pyplot(fig7)
+    
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        st.success(f"Optimal Clusters (k): **{best_k}**\n\nSilhouette Score: **{sil_scores[best_idx]:.3f}**")
+        elbow_df = pd.DataFrame({"k": k_range, "WSS": inertias, "Silhouette": sil_scores})
+        st.dataframe(elbow_df.round(3), use_container_width=True, hide_index=True)
+        
+    with col2:
+        fig_elbow = go.Figure()
+        fig_elbow.add_trace(go.Scatter(x=k_range, y=inertias, mode='lines+markers', name='WSS', yaxis='y1'))
+        fig_elbow.add_trace(go.Scatter(x=k_range, y=sil_scores, mode='lines+markers', name='Silhouette', yaxis='y2'))
+        fig_elbow.update_layout(
+            title="Elbow Method & Silhouette Score",
+            yaxis=dict(title="WSS"),
+            yaxis2=dict(title="Silhouette", overlaying='y', side='right'),
+            template="plotly_white"
+        )
+        st.plotly_chart(fig_elbow, use_container_width=True)
+
     km = KMeans(n_clusters=best_k, random_state=CONFIG["random_state"], n_init=10)
     df["cluster"] = km.fit_predict(Xs)
-    st.subheader("Cluster profiles")
+    
+    st.subheader("Cluster Profiles")
     prof = df.groupby("cluster").agg(
-        events=("cluster", "size"),
-        water_mean=("water_level_num", "mean"),
-        families_mean=("families_num", "mean"),
-        infra_mean=("damage_infra_num", "mean"),
-        agri_mean=("damage_agri_num", "mean"),
+        Events=("cluster", "size"),
+        Avg_Water_Level=("water_level_num", "mean"),
+        Avg_Families=("families_num", "mean"),
+        Avg_Infra_Damage=("damage_infra_num", "mean"),
+        Avg_Agri_Damage=("damage_agri_num", "mean"),
     ).round(2)
     st.dataframe(prof, use_container_width=True)
-    st.subheader("Barangay distribution per cluster")
+    
+    st.subheader("Barangay Distribution Across Clusters")
     ct3 = pd.crosstab(df["cluster"], df[CONFIG["barangay_col"]])
-    st.dataframe(ct3, use_container_width=True)
-    fig8, ax8 = plt.subplots(figsize=(10, 5))
-    sns.heatmap(ct3, annot=True, fmt="d", cmap="Blues", ax=ax8)
-    st.pyplot(fig8)
-    st.subheader("Weather system per cluster")
-    ct4 = pd.crosstab(df["cluster"], df[CONFIG["cause_col"]])
-    st.dataframe(ct4, use_container_width=True)
+    fig_heat = px.imshow(ct3, text_auto=True, aspect="auto", color_continuous_scale="Blues")
+    st.plotly_chart(fig_heat, use_container_width=True)
 
 with tabs[3]:
-    st.subheader("Decision tree severity classifier")
+    st.subheader("Decision Tree Severity Classifier")
     model_cols = ["water_level_num", "families_num", "damage_infra_num", "damage_agri_num"]
     mdf = df.dropna(subset=["severity"]).copy()
     Xm = mdf[model_cols].fillna(mdf[model_cols].median()).values
     ym = mdf["severity"].values
+    
+    min_class_count = pd.Series(ym).value_counts().min()
+    stratify_arg = ym if min_class_count >= 2 else None
+
     X_train, X_test, y_train, y_test = train_test_split(
-        Xm, ym, test_size=CONFIG["train_test_split"], random_state=CONFIG["random_state"], stratify=ym
+        Xm, ym, test_size=CONFIG["train_test_split"], random_state=CONFIG["random_state"], stratify=stratify_arg
     )
+    
     dt = DecisionTreeClassifier(max_depth=5, random_state=CONFIG["random_state"])
     dt.fit(X_train, y_train)
     y_pred = dt.predict(X_test)
-    acc = accuracy_score(y_test, y_pred)
-    prec = precision_score(y_test, y_pred, average="weighted", zero_division=0)
-    rec = recall_score(y_test, y_pred, average="weighted", zero_division=0)
-    f1 = f1_score(y_test, y_pred, average="weighted", zero_division=0)
-    st.metric("Accuracy", f"{acc:.3f}")
-    st.metric("Precision (weighted)", f"{prec:.3f}")
-    st.metric("Recall (weighted)", f"{rec:.3f}")
-    st.metric("F1 (weighted)", f"{f1:.3f}")
-    labels = sorted(set(y_test))
-    cm = confusion_matrix(y_test, y_pred, labels=labels)
-    st.subheader("Confusion matrix")
-    st.dataframe(pd.DataFrame(cm, index=labels, columns=labels), use_container_width=True)
-    fig9, ax9 = plt.subplots(figsize=(6, 4))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Oranges", xticklabels=labels, yticklabels=labels, ax=ax9)
-    ax9.set_xlabel("Predicted")
-    ax9.set_ylabel("Actual")
-    st.pyplot(fig9)
-    st.subheader("Feature importance")
-    imp = pd.Series(dt.feature_importances_, index=model_cols).sort_values(ascending=False)
-    st.dataframe(imp.rename_axis("Feature").reset_index(name="Importance").round(4), use_container_width=True)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Accuracy", f"{accuracy_score(y_test, y_pred):.3f}")
+    col2.metric("Precision", f"{precision_score(y_test, y_pred, average='weighted', zero_division=0):.3f}")
+    col3.metric("Recall", f"{recall_score(y_test, y_pred, average='weighted', zero_division=0):.3f}")
+    col4.metric("F1 Score", f"{f1_score(y_test, y_pred, average='weighted', zero_division=0):.3f}")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("**Confusion Matrix**")
+        labels = sorted(set(y_test))
+        cm = confusion_matrix(y_test, y_pred, labels=labels)
+        fig_cm = px.imshow(cm, text_auto=True, x=labels, y=labels, color_continuous_scale="Oranges", labels=dict(x="Predicted", y="Actual"))
+        st.plotly_chart(fig_cm, use_container_width=True)
+        
+    with col2:
+        st.write("**Feature Importance**")
+        imp = pd.Series(dt.feature_importances_, index=model_cols).sort_values(ascending=True).reset_index()
+        imp.columns = ["Feature", "Importance"]
+        fig_imp = px.bar(imp, x="Importance", y="Feature", orientation='h', color_discrete_sequence=["#ff7f0e"])
+        st.plotly_chart(fig_imp, use_container_width=True)
 
 with tabs[4]:
-    st.subheader("Apriori association rules")
+    st.subheader("Apriori Association Rules")
+    st.write("Mining rules based on Weather Cause, Barangay, Month, and Severity.")
+    
     adf = df.copy()
     adf = adf.dropna(subset=["severity"])
     trans = pd.DataFrame(index=adf.index)
@@ -380,38 +413,52 @@ with tabs[4]:
     month_names = adf["month_num"].dropna().astype(int).apply(lambda m: pd.Timestamp(2024, m, 1).strftime("%B"))
     trans["Month_" + month_names] = True
     trans = trans.fillna(False).astype(bool)
+    
     freq = apriori(trans, min_support=CONFIG["apriori_min_support"], use_colnames=True)
     if freq.empty:
-        st.write("No itemsets met the minimum support threshold.")
+        st.warning("No itemsets met the minimum support threshold.")
     else:
         rules = association_rules(freq, metric="confidence", min_threshold=CONFIG["apriori_min_confidence"])
         rules = rules[rules["lift"] >= CONFIG["apriori_min_lift"]]
+        
         if rules.empty:
-            st.write("No rules met the confidence and lift thresholds.")
+            st.warning("No rules met the confidence and lift thresholds.")
         else:
             rules["antecedents_str"] = rules["antecedents"].apply(lambda s: ", ".join(sorted(s)))
             rules["consequents_str"] = rules["consequents"].apply(lambda s: ", ".join(sorted(s)))
             show = rules[["antecedents_str", "consequents_str", "support", "confidence", "lift"]].sort_values("lift", ascending=False)
-            st.dataframe(show.round(3), use_container_width=True)
-            fig10, ax10 = plt.subplots(figsize=(8, 5))
-            ax10.scatter(rules["support"], rules["confidence"], c=rules["lift"], cmap="viridis", alpha=0.7)
-            ax10.set_xlabel("Support")
-            ax10.set_ylabel("Confidence")
-            st.pyplot(fig10)
+            st.dataframe(show.round(3), use_container_width=True, hide_index=True)
+            
+            fig_rules = px.scatter(rules, x="support", y="confidence", color="lift", 
+                                   hover_data=["antecedents_str", "consequents_str"],
+                                   color_continuous_scale="Viridis", template="plotly_white")
+            st.plotly_chart(fig_rules, use_container_width=True)
 
 with tabs[5]:
-    st.subheader("Derived priorities")
-    bc = df[CONFIG["barangay_col"]].value_counts()
-    st.write("Barangays with most flood records:")
-    st.dataframe(bc.head(10).rename_axis("Barangay").reset_index(name="Records"), use_container_width=True)
-    high_by_b = df[df["severity"] == "High"][CONFIG["barangay_col"]].value_counts()
-    st.write("Barangays with most high-severity events:")
-    st.dataframe(high_by_b.head(10).rename_axis("Barangay").reset_index(name="High-severity records"), use_container_width=True)
-    high_by_m = df[(df["severity"] == "High") & df["month_num"].notna()]["month_num"].astype(int).value_counts().sort_index()
-    high_by_m.index = [pd.Timestamp(2024, m, 1).strftime("%B") for m in high_by_m.index]
-    st.write("Months with most high-severity events:")
-    st.dataframe(high_by_m.rename_axis("Month").reset_index(name="High-severity records"), use_container_width=True)
-    cause_share = df[CONFIG["cause_col"]].value_counts(normalize=True).mul(100).round(1)
-    st.write("Share of records by weather system (%):")
-    st.dataframe(cause_share.rename_axis("Weather System").reset_index(name="Share (%)"), use_container_width=True)
-    st.write(f"Records span {int(df['year_num'].min())} to {int(df['year_num'].max())} where years are recorded.")
+    st.subheader("Derived Decision Support Priorities")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("**Top Barangays by Flood Records**")
+        bc = df[CONFIG["barangay_col"]].value_counts().head(10).reset_index()
+        bc.columns = ["Barangay", "Records"]
+        fig_b = px.bar(bc, x="Records", y="Barangay", orientation='h', color_discrete_sequence=["#1f77b4"])
+        fig_b.update_layout(yaxis={'categoryorder':'total ascending'})
+        st.plotly_chart(fig_b, use_container_width=True)
+        
+    with col2:
+        st.write("**Top Barangays by High-Severity Events**")
+        high_by_b = df[df["severity"] == "High"][CONFIG["barangay_col"]].value_counts().head(10).reset_index()
+        high_by_b.columns = ["Barangay", "High-Severity Records"]
+        fig_hb = px.bar(high_by_b, x="High-Severity Records", y="Barangay", orientation='h', color_discrete_sequence=["#d62728"])
+        fig_hb.update_layout(yaxis={'categoryorder':'total ascending'})
+        st.plotly_chart(fig_hb, use_container_width=True)
+        
+    st.write("**Primary Flood Drivers (Share of Total Records)**")
+    cause_share = df[CONFIG["cause_col"]].value_counts(normalize=True).mul(100).round(1).reset_index()
+    cause_share.columns = ["Weather System", "Percentage (%)"]
+    fig_share = px.treemap(cause_share, path=["Weather System"], values="Percentage (%)", color="Percentage (%)", color_continuous_scale="Blues")
+    st.plotly_chart(fig_share, use_container_width=True)
+    
+    min_year, max_year = int(df['year_num'].min()), int(df['year_num'].max())
+    st.info(f"Data records span from **{min_year}** to **{max_year}**.")
