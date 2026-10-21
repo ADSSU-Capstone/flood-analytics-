@@ -199,15 +199,16 @@ with tab5:
         trans["Brgy_" + adf[CONFIG["barangay_col"]].astype(str)] = True
         trans["Severity_" + adf["severity"].astype(str)] = True
         
-        # Adding Month to the rules logic for richer insights
-        month_names = adf["month_num"].apply(lambda m: pd.Timestamp(2024, int(m), 1).strftime("%B") if pd.notna(m) else "Unknown")
-        trans["Month_" + month_names] = True
+        # Include Cause to ensure we get robust rules without crashing
+        trans["Cause_" + adf[CONFIG["cause_col"]].astype(str)] = True
         
         trans = trans.fillna(False).astype(bool)
         
-        # Lowered thresholds to the absolute minimum to force rules to appear
-        freq = apriori(trans, min_support=0.005, use_colnames=True)
+        # min_support 0.01 means combination must appear at least 2 times
+        freq = apriori(trans, min_support=0.01, use_colnames=True)
+        
         if not freq.empty:
+            # Use min_threshold 0.1 to safely calculate confidence
             rules = association_rules(freq, metric="confidence", min_threshold=0.1)
             rules = rules[rules["lift"] > 1.0]
             
