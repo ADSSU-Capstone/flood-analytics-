@@ -107,7 +107,6 @@ st.sidebar.metric("Affected Barangays", df[CONFIG["barangay_col"]].nunique())
 st.sidebar.metric("Families Affected", f"{int(df['families_num'].sum(skipna=True)):,}")
 st.sidebar.metric("Total Damage (PHP)", f"₱{int(df['damage_total_num'].sum(skipna=True)):,}")
 
-# Removed (Scikit-Learn) from the tab names
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "Seasonality", "K-Means Clustering", "Decision Tree", "Rules & Support"])
 
 with tab1:
@@ -201,25 +200,25 @@ with tab5:
         trans["Severity_" + adf["severity"].astype(str)] = True
         trans = trans.fillna(False).astype(bool)
         
-        # LOWERED THRESHOLDS so rules appear for this dataset size
-        freq = apriori(trans, min_support=0.02, use_colnames=True)
+        # Lowered support to 0.01 to ensure rules are found for this dataset size
+        freq = apriori(trans, min_support=0.01, use_colnames=True)
         if not freq.empty:
-            rules = association_rules(freq, metric="confidence", min_threshold=0.3)
+            rules = association_rules(freq, metric="confidence", min_threshold=0.2)
             rules = rules[rules["lift"] > 1.0]
             
             if not rules.empty:
                 rules["Antecedent"] = rules["antecedents"].apply(lambda s: ", ".join(sorted(s)))
                 rules["Consequent"] = rules["consequents"].apply(lambda s: ", ".join(sorted(s)))
-                st.dataframe(rules[["Antecedent", "Consequent", "support", "confidence", "lift"]].sort_values("lift", ascending=False).head(10), hide_index=True)
+                st.dataframe(rules[["Antecedent", "Consequent", "support", "confidence", "lift"]].sort_values("lift", ascending=False).head(15), hide_index=True)
             else:
-                st.info("No strong rules found.")
+                st.info("No strong rules found even at lower thresholds.")
         else:
             st.info("No frequent itemsets found.")
             
         st.divider()
         st.subheader("Dynamic Recommendations (Obj 3)")
-        high_brgy = df[df['severity']=='High'][CONFIG['barangay_col']].value_counts()
-        top_high_brgy = high_brgy.index[0] if not high_brgy.empty else df[CONFIG['barangay_col']].value_counts().index[0]
+        high_brgy = df[df['severity']=='High'][CONFIG["barangay_col"]].value_counts()
+        top_high_brgy = high_brgy.index[0] if not high_brgy.empty else df[CONFIG["barangay_col"]].value_counts().index[0]
         top_month_idx = df['month_num'].dropna().value_counts()
         top_month = pd.Timestamp(2024, int(top_month_idx.index[0]), 1).strftime('%B') if not top_month_idx.empty else "January"
         
