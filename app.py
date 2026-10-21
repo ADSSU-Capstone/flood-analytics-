@@ -25,8 +25,6 @@ CONFIG = {
     "month_col": "Month",
     "year_col": "Year",
     "sheet_index": 0,
-    "severity_low": {"water": 2.0, "families": 50, "damage": 100000},
-    "severity_mod": {"water": 4.0, "families": 200, "damage": 500000},
     "train_test_split": 0.3,
     "random_state": 42,
 }
@@ -65,13 +63,6 @@ def parse_month(v):
         n = int(float(s))
         return n if 1 <= n <= 12 else np.nan
     except: return np.nan
-
-def parse_year(v):
-    if pd.isna(v): return np.nan
-    try: return int(float(str(v)))
-    except:
-        m = re.search(r"(19|20)\d{2}", str(v))
-        return int(m.group(0)) if m else np.nan
 
 def severity_label(row):
     w, f, d = row["water_level_num"], row["families_num"], row["damage_total_num"]
@@ -127,7 +118,6 @@ def load_and_clean(file_path):
     df["damage_agri_num"] = df[ac].apply(parse_currency)
     df["damage_total_num"] = df[["damage_infra_num", "damage_agri_num"]].sum(axis=1, min_count=1)
     df["month_num"] = df[CONFIG["month_col"]].apply(parse_month)
-    df["year_num"] = df[CONFIG["year_col"]].apply(parse_year)
     
     df = df.dropna(subset=[bc, cc])
     df["severity"] = df.apply(severity_label, axis=1)
@@ -176,7 +166,7 @@ with tab3:
     st.header("K-Means Clustering (Flood Profiles)")
     st.write("Groups similar flood events to identify distinct risk profiles.")
     try:
-        feat = df[["water_level_num", "families_num", "damage_infra_num", "damage_agri_num"]].fillna(0)
+        feat = df[["water_level_num", "families_num", "damage_infra_num", "damage_agri_num"]].fillna(0).to_numpy()
         Xs = StandardScaler().fit_transform(feat)
         
         km = KMeans(n_clusters=3, random_state=42, n_init=10).fit(Xs)
@@ -199,8 +189,10 @@ with tab4:
     st.write("Trains a model to predict severity based on damage and water levels.")
     try:
         model_cols = ["water_level_num", "families_num", "damage_infra_num", "damage_agri_num"]
-        Xm = df[model_cols].fillna(0).values
-        ym = df["severity"].values
+        
+        # Explicitly convert to float numpy arrays to fix the scikit-learn bug
+        Xm = df[model_cols].fillna(0).to_numpy(dtype=float)
+        ym = df["severity"].to_numpy()
         
         X_train, X_test, y_train, y_test = train_test_split(Xm, ym, test_size=0.3, random_state=42)
         dt = DecisionTreeClassifier(max_depth=4, random_state=42).fit(X_train, y_train)
@@ -208,7 +200,8 @@ with tab4:
         
         col1, col2, col3 = st.columns(3)
         col1.metric("Accuracy", f"{accuracy_score(y_test, y_pred):.2f}")
-        col2.metric("F1 Score", f"{f1_score(y_test, y_pred, average='weighted', zero_division=0):.2f}")
+        col2.metric("Precision", f"{precision_score(y_test, y_pred, average='weighted', zero_division=0):.2f}")
+        col3.metric("F1 Score", f"{f1_score(y_test, y_pred, average='weighted', zero_division=0):.2f}")
         
         st.subheader("Feature Importance (What causes High Severity?)")
         imp = pd.Series(dt.feature_importances_, index=model_cols).sort_values()
@@ -241,13 +234,21 @@ with tab5:
             
         st.divider()
         st.subheader("Dynamic Recommendations (Obj 3)")
+        
+        # Safely grab the top values for the recommendation text
+        high_brgy = df[df['severity']=='High'][CONFIG['barangay_col']].value_counts()
+        top_high_brgy = high_brgy.index[0] if not high_brgy.empty else "N/A"
+        
+        top_month_idx = df['month_num'].dropna().value_counts()
+        top_month = pd.Timestamp(2024, int(top_month_idx.index[0]), 1).strftime('%B') if not top_month_idx.empty else "N/A"
+        
         st.success(f"""
         **Based on the Clustering and Decision Tree Results:**
-        *Target Barangay:* **{df[df['severity']=='High'][CONFIG['barangay_col']].value_counts().index[0]}**
+        *Target Barangay:* **{top_high_brgy}**
         *Action:* This area has the highest number of High-Severity floods. The LGU should prioritize budget allocation for evacuation centers and pre-position relief goods here.
         
         **Based on the Seasonality & Association Rules:**
-        *Target Month:* **{pd.Timestamp(2024, int(df['month_num'].dropna().value_counts().index[0]), 1).strftime('%B')}**
+        *Target Month:* **{top_month}**
         *Action:* Historical data shows floods peak this month. Mandatory drills and river dredging should be completed before this period.
         """)
     except Exception as e:
