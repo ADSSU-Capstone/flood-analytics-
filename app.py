@@ -3,8 +3,6 @@ import unicodedata
 import numpy as np
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
-import seaborn as sns
 from itertools import combinations
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
@@ -153,23 +151,17 @@ with tab3:
             
             st.success("Clustering complete. The data was grouped into 3 distinct risk profiles.")
             
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                prof = cdf.groupby("cluster").agg(
-                    Events=("cluster", "size"),
-                    Avg_Water_Level=("water_level_num", "mean"),
-                    Avg_Families=("families_num", "mean"),
-                    Avg_Damage=("damage_total_num", "mean")
-                ).round(2)
-                st.dataframe(prof)
-                
-            with col2:
-                st.write("**Scatter Plot: Water Level vs Total Damage**")
-                fig, ax = plt.subplots(figsize=(8, 5))
-                sns.scatterplot(data=cdf, x="water_level_num", y="damage_total_num", hue="cluster", palette="viridis", ax=ax)
-                ax.set_ylabel("Damage (PHP)")
-                ax.set_xlabel("Water Level (ft)")
-                st.pyplot(fig)
+            prof = cdf.groupby("cluster").agg(
+                Events=("cluster", "size"),
+                Avg_Water_Level=("water_level_num", "mean"),
+                Avg_Families=("families_num", "mean"),
+                Avg_Damage=("damage_total_num", "mean")
+            ).round(2)
+            st.dataframe(prof)
+            
+            st.write("**Bar Chart: Water Level by Cluster**")
+            st.bar_chart(cdf.groupby("cluster")["water_level_num"].mean())
+            
         else:
             st.warning("Not enough complete data to run clustering.")
     except Exception as e:
@@ -194,20 +186,10 @@ with tab4:
         col2.metric("Precision", f"{precision_score(y_test, y_pred, average='weighted', zero_division=0):.2f}")
         col3.metric("F1 Score", f"{f1_score(y_test, y_pred, average='weighted', zero_division=0):.2f}")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Feature Importance")
-            imp = pd.Series(dt.feature_importances_, index=model_cols).sort_values()
-            st.bar_chart(imp)
-            
-        with col2:
-            st.subheader("Confusion Matrix")
-            cm = confusion_matrix(y_test, y_pred, labels=np.unique(ym))
-            fig, ax = plt.subplots(figsize=(6, 4))
-            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=np.unique(ym), yticklabels=np.unique(ym), ax=ax)
-            ax.set_ylabel('Actual')
-            ax.set_xlabel('Predicted')
-            st.pyplot(fig)
+        st.subheader("Feature Importance")
+        imp = pd.Series(dt.feature_importances_, index=model_cols).sort_values(ascending=False)
+        st.dataframe(imp)
+        st.bar_chart(imp)
     except Exception as e:
         st.error(f"Decision Tree error: {e}")
 
