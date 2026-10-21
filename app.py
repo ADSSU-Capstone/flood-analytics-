@@ -225,8 +225,9 @@ with tabs[2]:
     inertias, sil_scores = [], []
     
     for k in k_range:
-        labels = KMeans(n_clusters=k, random_state=CONFIG["random_state"], n_init=10).fit_predict(Xs)
-        inertias.append(KMeans(n_clusters=k, random_state=CONFIG["random_state"], n_init=10).fit(Xs).inertia_)
+        km = KMeans(n_clusters=k, random_state=CONFIG["random_state"], n_init=10)
+        labels = km.fit_predict(Xs)
+        inertias.append(km.inertia_)
         sil_scores.append(silhouette_score(Xs, labels) if k > 1 else np.nan)
             
     best_k = k_range[int(np.nanargmax(sil_scores))]
@@ -250,7 +251,6 @@ with tabs[3]:
     model_cols = ["water_level_num", "families_num", "damage_infra_num", "damage_agri_num"]
     mdf = df.dropna(subset=["severity"]).copy()
     
-    # Explicitly cast to float numpy arrays to prevent pyarrow/sklearn slicing conflict
     Xm = mdf[model_cols].fillna(mdf[model_cols].median()).to_numpy(dtype=float)
     ym = mdf["severity"].to_numpy()
     
@@ -282,30 +282,38 @@ with tabs[3]:
 
 with tabs[4]:
     st.subheader("Apriori Association Rules")
-    adf = df.copy().dropna(subset=["severity"])
     
-    trans = pd.DataFrame(index=adf.index)
-    trans["Barangay_" + adf[CONFIG["barangay_col"]].astype(str)] = True
-    trans["Cause_" + adf[CONFIG["cause_col"]].astype(str)] = True
-    trans["Severity_" + adf["severity"].astype(str)] = True
-    month_names = adf["month_num"].dropna().astype(int).apply(lambda m: pd.Timestamp(2024, m, 1).strftime("%B"))
-    trans["Month_" + month_names] = True
-    trans = trans.fillna(False).astype(bool)
-    
-    freq = apriori(trans, min_support=CONFIG["apriori_min_support"], use_colnames=True)
-    if freq.empty:
-        st.warning("No itemsets met the minimum support threshold.")
-    else:
-        rules = association_rules(freq, metric="confidence", min_threshold=CONFIG["apriori_min_confidence"])
-        rules = rules[rules["lift"] >= CONFIG["apriori_min_lift"]]
+    try:
+        adf = df.copy().dropna(subset=["severity"]).reset_index(drop=True)
         
-        if rules.empty:
-            st.warning("No rules met the thresholds.")
+        trans = pd.DataFrame(index=adf.index)
+        trans["Barangay_" + adf[CONFIG["barangay_col"]].astype(str)] = True
+        trans["Cause_" + adf[CONFIG["cause_col"]].astype(str)] = True
+        trans["Severity_" + adf["severity"].astype(str)] = True
+        
+        # Fill missing months with 'Unknown' to prevent index misalignment
+        month_names = adf["month_num"].apply(lambda m: pd.Timestamp(2024, int(m), 1).strftime("%B") if pd.notna(m) else "Unknown")
+        trans["Month_" + month_names] = True
+        
+        trans = trans.fillna(False).astype(bool)
+        
+        freq = apriori(trans, min_support=CONFIG["apriori_min_support"], use_colnames=True)
+        
+        if freq.empty:
+            st.warning("No itemsets met the minimum support threshold.")
         else:
-            rules["antecedents_str"] = rules["antecedents"].apply(lambda s: ", ".join(sorted(s)))
-            rules["consequents_str"] = rules["consequents"].apply(lambda s: ", ".join(sorted(s)))
-            st.dataframe(rules[["antecedents_str", "consequents_str", "support", "confidence", "lift"]].sort_values("lift", ascending=False).round(3), use_container_width=True, hide_index=True)
-            st.plotly_chart(px.scatter(rules, x="support", y="confidence", color="lift", hover_data=["antecedents_str", "consequents_str"], color_continuous_scale="Viridis", template="plotly_white"), use_container_width=True)
+            rules = association_rules(freq, metric="confidence", min_threshold=CONFIG["apriori_min_confidence"])
+            rules = rules[rules["lift"] >= CONFIG["apriori_min_lift"]]
+            
+            if rules.empty:
+                st.warning("No rules met the confidence and lift thresholds.")
+            else:
+                rules["antecedents_str"] = rules["antecedents"].apply(lambda s: ", ".join(sorted(s)))
+                rules["consequents_str"] = rules["consequents"].apply(lambda s: ", ".join(sorted(s)))
+                st.dataframe(rules[["antecedents_str", "consequents_str", "support", "confidence", "lift"]].sort_values("lift", ascending=False).round(3), use_container_width=True, hide_index=True)
+                st.plotly_chart(px.scatter(rules, x="support", y="confidence", color="lift", hover_data=["antecedents_str", "consequents_str"], color_continuous_scale="Viridis", template="plotly_white"), use_container_width=True)
+    except Exception as e:
+        st.error(f"Could not generate rules: {e}")
 
 with tabs[5]:
     st.subheader("Derived Decision Support Priorities")
