@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import os
-import glob
 import re
 import warnings
 warnings.filterwarnings('ignore')
@@ -19,11 +18,11 @@ from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
-    confusion_matrix, silhouette_score, classification_report
+    confusion_matrix, silhouette_score
 )
 
 st.set_page_config(
-    page_title="Bunawan Flood Analytics Dashboard",
+    page_title="Flood Analytics Dashboard",
     page_icon="🌊",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -53,33 +52,6 @@ st.markdown("""
     .metric-card p  { color: #E0F2F1; margin: 0; font-size: 0.82rem;
                       text-transform: uppercase; letter-spacing: 0.8px; }
 
-    .output-banner {
-        background: linear-gradient(90deg, #FF7043 0%, #FFB74D 100%);
-        color: #1A1A1A; padding: 0.9rem 1.2rem;
-        border-radius: 8px; margin: 0.4rem 0 0.6rem 0;
-        font-weight: 700; font-size: 1.0rem;
-        box-shadow: 0 3px 10px rgba(255,112,67,0.25);
-    }
-    .output-banner small {
-        display: block; font-weight: 500; opacity: 0.9;
-        font-size: 0.83rem; margin-top: 0.2rem; color: #2C2C2C;
-    }
-    .expected-box {
-        background: #E0F2F1; border-left: 5px solid #004D40;
-        padding: 0.75rem 1.05rem; border-radius: 6px;
-        margin-bottom: 1.15rem; font-size: 0.88rem; color: #003B33;
-    }
-    .expected-box b { color: #004D40; }
-
-    .finding-card {
-        background: #FAFBFC; border: 1px solid #CFD8DC;
-        border-left: 6px solid #FF7043;
-        border-radius: 8px; padding: 1rem 1.2rem;
-        margin-bottom: 0.9rem;
-    }
-    .finding-card h5 { margin: 0 0 0.4rem 0; color: #004D40; font-weight: 700; }
-    .finding-card p  { margin: 0; font-size: 0.9rem; color: #37474F; }
-
     .stTabs [data-baseweb="tab-list"] { gap: 6px; }
     .stTabs [data-baseweb="tab"] {
         background-color: #ECEFF1; border-radius: 6px 6px 0 0;
@@ -91,17 +63,6 @@ st.markdown("""
     .dataframe thead tr th { background-color: #E0F2F1 !important; }
 </style>
 """, unsafe_allow_html=True)
-
-def render_output_banner(output_title, chapter3_expected, description):
-    st.markdown(
-        f'<div class="output-banner">Conceptual Framework Output: {output_title}'
-        f'<small>{description}</small></div>',
-        unsafe_allow_html=True
-    )
-    st.markdown(
-        f'<div class="expected-box"><b>Chapter 3 Expected Outcome:</b> {chapter3_expected}</div>',
-        unsafe_allow_html=True
-    )
 
 @st.cache_data(show_spinner=True)
 def load_flood_data():
@@ -261,8 +222,8 @@ def generate_rules(freq_itemsets, min_confidence=0.5):
 
 raw, load_message = load_flood_data()
 
-st.markdown('<div class="main-header">Bunawan Flood Analytics Dashboard</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Analyzing Historical Flood Records Using Data Mining for Disaster Preparedness Planning<br><i>Municipality of Bunawan, Agusan del Sur</i></div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">Flood Analytics Dashboard</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Historical Flood Records Analysis</div>', unsafe_allow_html=True)
 
 if raw is None:
     st.error(f"Error: {load_message}")
@@ -287,7 +248,7 @@ min_confidence = st.sidebar.slider("Apriori Min Confidence", 0.1, 1.0, 0.3, 0.05
 df_f = df[(df['Barangay'].isin(barangay_filter)) & (df['Year'].between(year_range[0], year_range[1]))].copy()
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "Overview", "High-Risk Barangays", "Seasonal Patterns", "Severity Levels", "Association Rules", "Preparedness Plan"
+    "Overview", "High-Risk Barangays", "Seasonal Patterns", "Severity Levels", "Association Rules", "Decision Support"
 ])
 
 with tab1:
@@ -313,8 +274,7 @@ with tab1:
         st.pyplot(fig)
 
 with tab2:
-    render_output_banner("High-Risk Flood Barangays", "Identification of barangays exhibiting similar flood risk profiles using K-Means.", "Clustering based on damage and severity.")
-    
+    st.header("High-Risk Flood Barangays")
     agg = df_f.groupby('Barangay').agg(
         Total_Records=('Year', 'count'),
         Mean_Water_Level=('Water_Level_Ft', 'mean'),
@@ -377,8 +337,7 @@ with tab2:
         st.warning("Not enough barangays for stable clustering.")
 
 with tab3:
-    render_output_banner("Seasonal Flood Patterns", "Description of monthly and yearly distribution of flood events.", "Descriptive analysis of time-based patterns.")
-    
+    st.header("Seasonal Flood Patterns")
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Flood Occurrences by Month")
@@ -407,8 +366,7 @@ with tab3:
         st.pyplot(fig)
 
 with tab4:
-    render_output_banner("Severity Levels", "Decision tree classification of flood events by severity level.", "Supervised classification evaluated by accuracy and F1-score.")
-    
+    st.header("Severity Levels")
     mdf = df_f.dropna(subset=['Water_Level_Ft', 'Families_Affected', 'Total_Damage', 'Severity'])
     if len(mdf) > 15 and mdf['Severity'].nunique() >= 2:
         Xm = mdf[['Water_Level_Ft', 'Families_Affected', 'Total_Damage']].values
@@ -449,8 +407,7 @@ with tab4:
         st.warning("Not enough data for Decision Tree.")
 
 with tab5:
-    render_output_banner("Association Rules (Apriori)", "Discovery of co-occurrence patterns among flood variables using Apriori.", "Rules evaluated by support, confidence, and lift.")
-    
+    st.header("Association Rules (Apriori)")
     txn_df = df_f.dropna(subset=['Barangay'])
     transactions = []
     for _, row in txn_df.iterrows():
@@ -486,41 +443,13 @@ with tab5:
             st.info("No rules met the current thresholds. Try lowering the sliders in the sidebar.")
 
 with tab6:
-    render_output_banner("Data-Driven Preparedness Plan", "Consolidated evidence snapshots synthesized across all three data mining techniques.", "Findings-only summary.")
-    
+    st.header("Decision Support")
     top_brgy = df_f['Barangay'].value_counts().idxmax() if not df_f.empty else 'N/A'
     top_cause = df_f['Flood_Cause'].value_counts().idxmax() if not df_f.empty else 'N/A'
     top_month = df_f['Month_Name'].value_counts().idxmax() if df_f['Month_Name'].notna().any() else 'N/A'
     high_sev_pct = (df_f['Severity'] == 'High').sum() / max(len(df_f), 1) * 100
 
-    st.markdown(f"""
-    <div class="finding-card">
-        <h5>Finding 1 - Concentration of Flood Risk</h5>
-        <p>A small group of barangays accounts for a disproportionate share of all recorded flood events. The top barangay is <b>{top_brgy}</b>. K-Means clustering further tiers these barangays into similar-risk groups (Tier 1 = highest damage profile).</p>
-        <p><b>Basis:</b> K-Means clustering output from the High-Risk Flood Barangays tab.</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown(f"""
-    <div class="finding-card">
-        <h5>Finding 2 - Seasonal and Monthly Concentration</h5>
-        <p>Flood occurrences in Bunawan are not uniformly distributed. The most frequently recorded flood month is <b>{top_month}</b>, which should dictate the seasonal calendar for preparedness.</p>
-        <p><b>Basis:</b> Descriptive seasonality output from the Seasonal Flood Patterns tab.</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown(f"""
-    <div class="finding-card">
-        <h5>Finding 3 - Dominant Flood-Causing Weather System</h5>
-        <p>The most frequently recorded flood-causing weather system is <b>{top_cause}</b>. This category of weather system is associated with the largest share of historical flood events.</p>
-        <p><b>Basis:</b> Descriptive cause distribution and association rules from the Association Rules tab.</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown(f"""
-    <div class="finding-card">
-        <h5>Finding 4 - Severity Profile of Flood Events</h5>
-        <p>Of all filtered flood records, <b>{high_sev_pct:.1f}%</b> are classified as <b>High severity</b>. Decision tree classification identified water level, family count, and total damage as the primary discriminators between severity tiers.</p>
-        <p><b>Basis:</b> Decision Tree classification output from the Severity Levels tab.</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"**Concentration of Flood Risk:** A small group of barangays accounts for a disproportionate share of all recorded flood events. The top barangay is **{top_brgy}**. K-Means clustering further tiers these barangays into similar-risk groups (Tier 1 = highest damage profile).")
+    st.markdown(f"**Seasonal and Monthly Concentration:** Flood occurrences are not uniformly distributed. The most frequently recorded flood month is **{top_month}**.")
+    st.markdown(f"**Dominant Flood-Causing Weather System:** The most frequently recorded flood-causing weather system is **{top_cause}**.")
+    st.markdown(f"**Severity Profile of Flood Events:** Of all filtered flood records, **{high_sev_pct:.1f}%** are classified as High severity. Decision tree classification identified water level, family count, and total damage as the primary discriminators between severity tiers.")
