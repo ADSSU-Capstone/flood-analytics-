@@ -9,12 +9,13 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, silhouette_score
 from mlxtend.frequent_patterns import apriori, association_rules
 
 st.set_page_config(layout="wide", page_title="Flood Records Analysis")
 
 CONFIG = {
+    "file_path": "flood_data.xlsx", # Make sure this matches your exact filename in GitHub
     "barangay_col": "Barangay",
     "cause_col": "Flood Cause",
     "water_col": "Water Level",
@@ -24,12 +25,6 @@ CONFIG = {
     "month_col": "Month",
     "year_col": "Year",
     "day_col": "Day",
-    "weather_col": "Weather",
-    "temp_col": "Temperature(°C)",
-    "rain_col": "Rainfall (mm)",
-    "wind_col": "Wind",
-    "pressure_col": "Pressure",
-    "responders_col": "No. of Responders",
     "sheet_index": 0,
     "severity_low": {"water": 2.0, "families": 50, "damage": 100000},
     "severity_mod": {"water": 4.0, "families": 200, "damage": 500000},
@@ -118,15 +113,10 @@ def parse_year(v):
         m = re.search(r"(19|20)\d{2}", s)
         return int(m.group(0)) if m else np.nan
 
-def parse_water(v):
-    n = parse_number(v)
-    return n
-
 def normalize_barangay(v):
     if pd.isna(v):
         return np.nan
     s = clean_text(v).title()
-    s = s.replace("Bunawan Brook", "Bunawan Brook")
     return s
 
 def normalize_cause(v):
@@ -161,8 +151,8 @@ def severity_label(row, cfg):
     return "Moderate"
 
 @st.cache_data(show_spinner=False)
-def load_and_clean(file_bytes):
-    df = pd.read_excel(pd.io.common.BytesIO(file_bytes), sheet_name=CONFIG["sheet_index"])
+def load_and_clean(file_path):
+    df = pd.read_excel(file_path, sheet_name=CONFIG["sheet_index"])
     df.columns = [clean_text(c) for c in df.columns]
     df = df.dropna(how="all")
     for c in df.columns:
@@ -178,7 +168,7 @@ def load_and_clean(file_bytes):
     dc = CONFIG["day_col"]
     df[bc] = df[bc].apply(normalize_barangay)
     df[cc] = df[cc].apply(normalize_cause)
-    df["water_level_num"] = df[wc].apply(parse_water)
+    df["water_level_num"] = df[wc].apply(parse_number)
     df["families_num"] = df[fc].apply(parse_number)
     df["damage_infra_num"] = df[ic].apply(parse_currency)
     df["damage_agri_num"] = df[ac].apply(parse_currency)
@@ -197,14 +187,12 @@ def load_and_clean(file_bytes):
     df["year_month"] = df["year_num"].astype("Int64").astype(str) + "-" + df["month_num"].astype("Int64").astype(str).str.zfill(2)
     return df
 
-def get_file():
-    uploaded = st.file_uploader("Upload flood dataset", type=["xlsx", "xls"])
-    if uploaded is None:
-        st.stop()
-    return uploaded
-
-uploaded = get_file()
-df = load_and_clean(uploaded.getvalue())
+# Load the data automatically
+try:
+    df = load_and_clean(CONFIG["file_path"])
+except FileNotFoundError:
+    st.error(f"Data file not found. Please ensure '{CONFIG['file_path']}' is uploaded to the same folder as app.py in your GitHub repository.")
+    st.stop()
 
 st.title("Flood Records Dashboard")
 
@@ -302,7 +290,7 @@ with tabs[2]:
     k_range = list(CONFIG["kmeans_k_range"])
     inertias = []
     sil_scores = []
-    from sklearn.metrics import silhouette_score
+    
     for k in k_range:
         km = KMeans(n_clusters=k, random_state=CONFIG["random_state"], n_init=10)
         labels = km.fit_predict(Xs)
@@ -311,6 +299,7 @@ with tabs[2]:
             sil_scores.append(silhouette_score(Xs, labels))
         else:
             sil_scores.append(np.nan)
+            
     best_idx = int(np.nanargmax(sil_scores))
     best_k = k_range[best_idx]
     st.write(f"Best k by silhouette coefficient: {best_k} (silhouette = {sil_scores[best_idx]:.3f})")
