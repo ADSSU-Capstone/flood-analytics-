@@ -3,12 +3,14 @@ import unicodedata
 import numpy as np
 import pandas as pd
 import streamlit as st
+import matplotlib.pyplot as plt
+import seaborn as sns
 from itertools import combinations
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
-from sklearn.tree import DecisionTreeClassifier
+from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, precision_score, f1_score
+from sklearn.metrics import accuracy_score, precision_score, f1_score, confusion_matrix
 
 st.set_page_config(layout="wide", page_title="Flood Analysis Dashboard", page_icon="🌊")
 
@@ -21,6 +23,7 @@ CONFIG = {
     "infra_col": "Damage Infrastructure",
     "agri_col": "Damage Agriculture",
     "month_col": "Month",
+    "year_col": "Year",
     "sheet_index": 0,
 }
 
@@ -87,6 +90,7 @@ def load_and_clean(file_path):
     df["damage_agri_num"] = df[ac].apply(parse_currency)
     df["damage_total_num"] = df[["damage_infra_num", "damage_agri_num"]].sum(axis=1, min_count=1)
     df["month_num"] = df[CONFIG["month_col"]].apply(parse_month)
+    df["year_num"] = pd.to_numeric(df[CONFIG["year_col"]], errors='coerce')
     
     df = df.dropna(subset=[bc, cc])
     df["severity"] = df.apply(severity_label, axis=1)
@@ -117,6 +121,10 @@ with tab1:
         st.subheader("Severity Distribution")
         sev = df["severity"].value_counts().reindex(["Low", "Moderate", "High"]).fillna(0)
         st.bar_chart(sev)
+        
+    st.subheader("Yearly Flood Trend")
+    ycount = df["year_num"].dropna().astype(int).value_counts().sort_index()
+    st.line_chart(ycount)
 
 with tab2:
     st.header("Seasonality & Weather")
@@ -144,14 +152,24 @@ with tab3:
             cdf["cluster"] = km.labels_
             
             st.success("Clustering complete. The data was grouped into 3 distinct risk profiles.")
-            prof = cdf.groupby("cluster").agg(
-                Events=("cluster", "size"),
-                Avg_Water_Level=("water_level_num", "mean"),
-                Avg_Families=("families_num", "mean"),
-                Avg_Damage=("damage_total_num", "mean")
-            ).round(2)
-            st.dataframe(prof)
-            st.bar_chart(cdf["cluster"].value_counts())
+            
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                prof = cdf.groupby("cluster").agg(
+                    Events=("cluster", "size"),
+                    Avg_Water_Level=("water_level_num", "mean"),
+                    Avg_Families=("families_num", "mean"),
+                    Avg_Damage=("damage_total_num", "mean")
+                ).round(2)
+                st.dataframe(prof)
+                
+            with col2:
+                st.write("**Scatter Plot: Water Level vs Total Damage**")
+                fig, ax = plt.subplots(figsize=(8, 5))
+                sns.scatterplot(data=cdf, x="water_level_num", y="damage_total_num", hue="cluster", palette="viridis", ax=ax)
+                ax.set_ylabel("Damage (PHP)")
+                ax.set_xlabel("Water Level (ft)")
+                st.pyplot(fig)
         else:
             st.warning("Not enough complete data to run clustering.")
     except Exception as e:
@@ -168,7 +186,7 @@ with tab4:
         ym = np.array(mdf["severity"].values, dtype=str)
         
         X_train, X_test, y_train, y_test = train_test_split(Xm, ym, test_size=0.3, random_state=42)
-        dt = DecisionTreeClassifier(max_depth=4, random_state=42).fit(X_train, y_train)
+        dt = DecisionTreeClassifier(max_depth=3, random_state=42).fit(X_train, y_train)
         y_pred = dt.predict(X_test)
         
         col1, col2, col3 = st.columns(3)
@@ -176,9 +194,26 @@ with tab4:
         col2.metric("Precision", f"{precision_score(y_test, y_pred, average='weighted', zero_division=0):.2f}")
         col3.metric("F1 Score", f"{f1_score(y_test, y_pred, average='weighted', zero_division=0):.2f}")
         
-        st.subheader("Feature Importance (What causes High Severity?)")
-        imp = pd.Series(dt.feature_importances_, index=model_cols).sort_values()
-        st.bar_chart(imp)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Feature Importance")
+            imp = pd.Series(dt.feature_importances_, index=model_cols).sort_values()
+            st.bar_chart(imp)
+            
+        with col2:
+            st.subheader("Confusion Matrix")
+            cm = confusion_matrix(y_test, y_pred, labels=np.unique(ym))
+            fig, ax = plt.subplots()
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=np.unique(ym), yticklabels=np.unique(ym), ax=ax)
+            ax.set_ylabel('Actual')
+            ax.set_xlabel('Predicted')
+            st.pyplot(fig)
+            
+        st.subheader("Decision Tree Logic")
+        fig_tree, ax_tree = plt.subplots(figsize=(15, 6))
+        plot_tree(dt, feature_names=model_cols, class_names=np.unique(ym), filled=True, ax=ax_tree, fontsize=10)
+        st.pyplot(fig_tree)
+        
     except Exception as e:
         st.error(f"Decision Tree error: {e}")
 
@@ -218,22 +253,30 @@ with tab5:
             st.info("No strong rules met the thresholds.")
             
         st.divider()
+        st.subheader("High-Risk Barangay Priority Chart")
+        # NEW CHART: Top 5 high severity barangays for recommendation proof
+        high_brgy = df[df['severity']=='High'][CONFIG['barangay_col']].value_counts().head(5)
+        st.bar_chart(high_brgy)
+        
         st.subheader("Dynamic Recommendations (Obj 3)")
         
-        high_brgy = df[df['severity']=='High'][CONFIG['barangay_col']].value_counts()
-        top_high_brgy = high_brgy.index[0] if not high_brgy.empty else "N/A"
-        
-        top_month_idx = df['month_num'].dropna().value_counts()
-        top_month = pd.Timestamp(2024, int(top_month_idx.index[0]), 1).strftime('%B') if not top_month_idx.empty else "N/A"
-        
-        st.success(f"""
-        **Based on the Clustering and Decision Tree Results:**
-        *Target Barangay:* **{top_high_brgy}**
-        *Action:* This area has the highest number of High-Severity floods. The LGU should prioritize budget allocation for evacuation centers and pre-position relief goods here.
-        
-        **Based on the Seasonality & Association Rules:**
-        *Target Month:* **{top_month}**
-        *Action:* Historical data shows floods peak this month. Mandatory drills and river dredging should be completed before this period.
-        """)
+        try:
+            top_high_brgy = high_brgy.index[0] if not high_brgy.empty else df[CONFIG['barangay_col']].value_counts().index[0]
+            
+            top_month_idx = df['month_num'].dropna().value_counts()
+            top_month = pd.Timestamp(2024, int(top_month_idx.index[0]), 1).strftime('%B') if not top_month_idx.empty else "January"
+            
+            st.success(f"""
+            **Based on the Clustering and Decision Tree Results:**
+            *Target Barangay:* **{top_high_brgy}**
+            *Action:* This area has the highest number of High-Severity floods (as seen in the chart above). The LGU should prioritize budget allocation for evacuation centers and pre-position relief goods here.
+            
+            **Based on the Seasonality & Association Rules:**
+            *Target Month:* **{top_month}**
+            *Action:* Historical data shows floods peak this month. Mandatory drills and river dredging should be completed before this period.
+            """)
+        except Exception as e:
+            st.warning("Could not generate dynamic recommendations due to missing data patterns.")
+            
     except Exception as e:
         st.error(f"Rule mining error: {e}")
