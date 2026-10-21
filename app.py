@@ -188,7 +188,7 @@ with tab4:
         imp.columns = ["Feature", "Importance"]
         st.plotly_chart(px.bar(imp, x="Feature", y="Importance", template="plotly_white"), use_container_width=True)
     except Exception as e:
-        st.error(f"Decision Tree error: {e}")
+        st.error(f"Decision Tree Error: {e}")
 
 with tab5:
     st.header("Association Rules & Decision Support")
@@ -198,12 +198,17 @@ with tab5:
         trans = pd.DataFrame(index=adf.index)
         trans["Brgy_" + adf[CONFIG["barangay_col"]].astype(str)] = True
         trans["Severity_" + adf["severity"].astype(str)] = True
+        
+        # Adding Month to the rules logic for richer insights
+        month_names = adf["month_num"].apply(lambda m: pd.Timestamp(2024, int(m), 1).strftime("%B") if pd.notna(m) else "Unknown")
+        trans["Month_" + month_names] = True
+        
         trans = trans.fillna(False).astype(bool)
         
-        # Lowered support to 0.01 to ensure rules are found for this dataset size
-        freq = apriori(trans, min_support=0.01, use_colnames=True)
+        # Lowered thresholds to the absolute minimum to force rules to appear
+        freq = apriori(trans, min_support=0.005, use_colnames=True)
         if not freq.empty:
-            rules = association_rules(freq, metric="confidence", min_threshold=0.2)
+            rules = association_rules(freq, metric="confidence", min_threshold=0.1)
             rules = rules[rules["lift"] > 1.0]
             
             if not rules.empty:
@@ -211,7 +216,7 @@ with tab5:
                 rules["Consequent"] = rules["consequents"].apply(lambda s: ", ".join(sorted(s)))
                 st.dataframe(rules[["Antecedent", "Consequent", "support", "confidence", "lift"]].sort_values("lift", ascending=False).head(15), hide_index=True)
             else:
-                st.info("No strong rules found even at lower thresholds.")
+                st.info("No strong rules found.")
         else:
             st.info("No frequent itemsets found.")
             
