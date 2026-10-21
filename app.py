@@ -3,12 +3,14 @@ import unicodedata
 import numpy as np
 import pandas as pd
 import streamlit as st
-from itertools import combinations
+import plotly.express as px
+import plotly.graph_objects as go
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, f1_score, confusion_matrix
+from mlxtend.frequent_patterns import apriori, association_rules
 
 st.set_page_config(layout="wide", page_title="Flood Analysis Dashboard", page_icon="🌊")
 
@@ -72,7 +74,8 @@ def severity_label(row):
 
 @st.cache_data(show_spinner=False)
 def load_and_clean(file_path):
-    df = pd.read_excel(file_path, sheet_name=CONFIG["sheet_index"])
+    # Added engine='openpyxl' to speed up loading on the cloud
+    df = pd.read_excel(file_path, sheet_name=CONFIG["sheet_index"], engine='openpyxl')
     df.columns = [clean_text(c) for c in df.columns]
     df = df.dropna(how="all")
     for c in df.columns: df[c] = df[c].apply(clean_text)
@@ -106,70 +109,68 @@ st.sidebar.metric("Affected Barangays", df[CONFIG["barangay_col"]].nunique())
 st.sidebar.metric("Families Affected", f"{int(df['families_num'].sum(skipna=True)):,}")
 st.sidebar.metric("Total Damage (PHP)", f"₱{int(df['damage_total_num'].sum(skipna=True)):,}")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "Seasonality", "Clustering", "Decision Tree", "Rules & Support"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "Seasonality", "K-Means Clustering", "Decision Tree", "Rules & Support"])
 
 with tab1:
     st.header("Flood Overview")
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Records by Barangay")
-        bc = df[CONFIG["barangay_col"]].value_counts()
-        st.bar_chart(bc)
+        bc = df[CONFIG["barangay_col"]].value_counts().reset_index()
+        bc.columns = ["Barangay", "Records"]
+        st.plotly_chart(px.bar(bc, x="Barangay", y="Records", template="plotly_white"), use_container_width=True)
     with col2:
         st.subheader("Severity Distribution")
-        sev = df["severity"].value_counts().reindex(["Low", "Moderate", "High"]).fillna(0)
-        st.bar_chart(sev)
-        
-    st.subheader("Yearly Flood Trend")
-    ycount = df["year_num"].dropna().astype(int).value_counts().sort_index()
-    st.line_chart(ycount)
+        sev = df["severity"].value_counts().reindex(["Low", "Moderate", "High"]).fillna(0).reset_index()
+        sev.columns = ["Severity", "Records"]
+        st.plotly_chart(px.pie(sev, names="Severity", values="Records", template="plotly_white"), use_container_width=True)
 
 with tab2:
     st.header("Seasonality & Weather")
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Flood Frequency by Month")
-        mcount = df["month_num"].dropna().astype(int).value_counts().sort_index()
-        mcount.index = [pd.Timestamp(2024, m, 1).strftime("%B") for m in mcount.index]
-        st.bar_chart(mcount)
+        mcount = df["month_num"].dropna().astype(int).value_counts().sort_index().reset_index()
+        mcount.columns = ["Month_Num", "Records"]
+        mcount["Month"] = mcount["Month_Num"].apply(lambda m: pd.Timestamp(2024, m, 1).strftime("%B"))
+        st.plotly_chart(px.bar(mcount, x="Month", y="Records", template="plotly_white"), use_container_width=True)
     with col2:
         st.subheader("Weather System Frequency")
-        wcount = df[CONFIG["cause_col"]].value_counts()
-        st.bar_chart(wcount)
+        wcount = df[CONFIG["cause_col"]].value_counts().reset_index()
+        wcount.columns = ["Weather System", "Records"]
+        st.plotly_chart(px.bar(wcount, x="Weather System", y="Records", template="plotly_white"), use_container_width=True)
 
 with tab3:
-    st.header("K-Means Clustering (Flood Profiles)")
-    st.write("Groups similar flood events to identify distinct risk profiles.")
+    st.header("K-Means Clustering (Scikit-Learn)")
     try:
         cluster_cols = ["water_level_num", "families_num", "damage_infra_num", "damage_agri_num"]
         cdf = df.dropna(subset=cluster_cols).copy()
         
-        if len(cdf) > 5:
-            Xs = StandardScaler().fit_transform(cdf[cluster_cols].values)
-            km = KMeans(n_clusters=3, random_state=42, n_init=5).fit(Xs)
-            cdf["cluster"] = km.labels_
-            
-            st.success("Clustering complete. The data was grouped into 3 distinct risk profiles.")
-            
-            prof = cdf.groupby("cluster").agg(
-                Events=("cluster", "size"),
-                Avg_Water_Level=("water_level_num", "mean"),
-                Avg_Families=("families_num", "mean"),
-                Avg_Damage=("damage_total_num", "mean")
-            ).round(2)
-            st.dataframe(prof)
-            
-            st.write("**Bar Chart: Water Level by Cluster**")
-            st.bar_chart(cdf.groupby("cluster")["water_level_num"].mean())
-            
-        else:
-            st.warning("Not enough complete data to run clustering.")
+        X = cdf[cluster_cols].values
+        X_scaled = StandardScaler().fit_transform(X)
+        
+        # Using Scikit-Learn KMeans as per manuscript
+        km = KMeans(n_clusters=3, random_state=42, n_init=10)
+        cdf["cluster"] = km.fit_predict(X_scaled)
+        
+        cluster_means = cdf.groupby("cluster")["water_level_num"].mean().sort_values()
+        mapping = {cluster_means.index[0]: "Low Risk", cluster_means.index[1]: "Moderate Risk", cluster_means.index[2]: "High Risk"}
+        cdf["Cluster Profile"] = cdf["cluster"].map(mapping)
+        
+        prof = cdf.groupby("Cluster Profile").agg(
+            Events=("Cluster Profile", "size"),
+            Avg_Water_Level=("water_level_num", "mean"),
+            Avg_Damage=("damage_total_num", "mean")
+        ).round(2).reset_index()
+        st.dataframe(prof)
+        
+        fig = px.scatter(cdf, x="water_level_num", y="damage_total_num", color="Cluster Profile", template="plotly_white")
+        st.plotly_chart(fig, use_container_width=True)
     except Exception as e:
         st.error(f"Clustering error: {e}")
 
 with tab4:
-    st.header("Decision Tree Severity Classification")
-    st.write("Trains a model to predict severity based on damage and water levels.")
+    st.header("Decision Tree Classification (Scikit-Learn)")
     try:
         model_cols = ["water_level_num", "families_num", "damage_infra_num", "damage_agri_num"]
         mdf = df.dropna(subset=model_cols).copy()
@@ -178,7 +179,7 @@ with tab4:
         ym = np.array(mdf["severity"].values, dtype=str)
         
         X_train, X_test, y_train, y_test = train_test_split(Xm, ym, test_size=0.3, random_state=42)
-        dt = DecisionTreeClassifier(max_depth=3, random_state=42).fit(X_train, y_train)
+        dt = DecisionTreeClassifier(max_depth=4, random_state=42).fit(X_train, y_train)
         y_pred = dt.predict(X_test)
         
         col1, col2, col3 = st.columns(3)
@@ -186,72 +187,47 @@ with tab4:
         col2.metric("Precision", f"{precision_score(y_test, y_pred, average='weighted', zero_division=0):.2f}")
         col3.metric("F1 Score", f"{f1_score(y_test, y_pred, average='weighted', zero_division=0):.2f}")
         
-        st.subheader("Feature Importance")
-        imp = pd.Series(dt.feature_importances_, index=model_cols).sort_values(ascending=False)
-        st.dataframe(imp)
-        st.bar_chart(imp)
+        imp = pd.Series(dt.feature_importances_, index=model_cols).reset_index()
+        imp.columns = ["Feature", "Importance"]
+        st.plotly_chart(px.bar(imp, x="Feature", y="Importance", template="plotly_white"), use_container_width=True)
     except Exception as e:
         st.error(f"Decision Tree error: {e}")
 
 with tab5:
-    st.header("Association Rules & Decision Support")
-    st.write("Generates 'If-Then' rules based on historical data to guide preparedness.")
-    
+    st.header("Apriori Association Rules (MLxtend)")
     try:
-        adf = df.dropna(subset=["severity"]).copy()
-        transactions = []
-        for _, row in adf.iterrows():
-            t = [f"Brgy_{row[CONFIG['barangay_col']]}", f"Severity_{row['severity']}"]
-            transactions.append(t)
-            
-        rules = []
-        n = len(transactions)
-        all_items = set(item for t in transactions for item in t)
+        adf = df.dropna(subset=["severity"]).copy().reset_index(drop=True)
         
-        for item1, item2 in combinations(all_items, 2):
-            count_both = sum(1 for t in transactions if item1 in t and item2 in t)
-            count_1 = sum(1 for t in transactions if item1 in t)
-            count_2 = sum(1 for t in transactions if item2 in t)
-            
-            if count_both > 0 and count_1 > 0 and count_2 > 0:
-                support = count_both / n
-                conf_1_2 = count_both / count_1
-                lift = conf_1_2 / (count_2 / n)
-                
-                if support > 0.05 and conf_1_2 > 0.4 and lift > 1.0:
-                    rules.append({"If (Antecedent)": item1, "Then (Consequent)": item2, "Confidence": f"{conf_1_2*100:.1f}%", "Lift": round(lift, 2)})
-                    
-        rules.sort(key=lambda x: float(x["Confidence"].replace('%','')), reverse=True)
+        # One-hot encoding for MLxtend
+        trans = pd.DataFrame(index=adf.index)
+        trans["Brgy_" + adf[CONFIG["barangay_col"]].astype(str)] = True
+        trans["Severity_" + adf["severity"].astype(str)] = True
+        trans = trans.fillna(False).astype(bool)
         
-        if rules:
-            st.dataframe(pd.DataFrame(rules[:15]), hide_index=True)
+        freq = apriori(trans, min_support=0.05, use_colnames=True)
+        if not freq.empty:
+            rules = association_rules(freq, metric="confidence", min_threshold=0.4)
+            rules = rules[rules["lift"] > 1.0]
+            
+            if not rules.empty:
+                rules["Antecedent"] = rules["antecedents"].apply(lambda s: ", ".join(sorted(s)))
+                rules["Consequent"] = rules["consequents"].apply(lambda s: ", ".join(sorted(s)))
+                st.dataframe(rules[["Antecedent", "Consequent", "support", "confidence", "lift"]].sort_values("lift", ascending=False).head(10), hide_index=True)
+            else:
+                st.info("No strong rules found.")
         else:
-            st.info("No strong rules met the thresholds.")
+            st.info("No frequent itemsets found.")
             
         st.divider()
-        st.subheader("High-Risk Barangay Priority Chart")
-        high_brgy = df[df['severity']=='High'][CONFIG['barangay_col']].value_counts().head(5)
-        st.bar_chart(high_brgy)
-        
         st.subheader("Dynamic Recommendations (Obj 3)")
+        high_brgy = df[df['severity']=='High'][CONFIG['barangay_col']].value_counts()
+        top_high_brgy = high_brgy.index[0] if not high_brgy.empty else df[CONFIG['barangay_col']].value_counts().index[0]
+        top_month_idx = df['month_num'].dropna().value_counts()
+        top_month = pd.Timestamp(2024, int(top_month_idx.index[0]), 1).strftime('%B') if not top_month_idx.empty else "January"
         
-        try:
-            top_high_brgy = high_brgy.index[0] if not high_brgy.empty else df[CONFIG['barangay_col']].value_counts().index[0]
-            
-            top_month_idx = df['month_num'].dropna().value_counts()
-            top_month = pd.Timestamp(2024, int(top_month_idx.index[0]), 1).strftime('%B') if not top_month_idx.empty else "January"
-            
-            st.success(f"""
-            **Based on the Clustering and Decision Tree Results:**
-            *Target Barangay:* **{top_high_brgy}**
-            *Action:* This area has the highest number of High-Severity floods (as seen in the chart above). The LGU should prioritize budget allocation for evacuation centers and pre-position relief goods here.
-            
-            **Based on the Seasonality & Association Rules:**
-            *Target Month:* **{top_month}**
-            *Action:* Historical data shows floods peak this month. Mandatory drills and river dredging should be completed before this period.
-            """)
-        except Exception as e:
-            st.warning("Could not generate dynamic recommendations due to missing data patterns.")
-            
+        st.success(f"""
+        **Target Barangay:** **{top_high_brgy}** (Highest number of High-Severity floods)
+        **Target Month:** **{top_month}** (Peak flood frequency)
+        """)
     except Exception as e:
         st.error(f"Rule mining error: {e}")
