@@ -22,9 +22,6 @@ from sklearn.metrics import (
     confusion_matrix, silhouette_score, classification_report
 )
 
-# ============================================================
-# PAGE CONFIG & CSS
-# ============================================================
 st.set_page_config(
     page_title="Bunawan Flood Analytics Dashboard",
     page_icon="🌊",
@@ -95,6 +92,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+
 def render_output_banner(output_title, chapter3_expected, description):
     st.markdown(
         f'<div class="output-banner">Conceptual Framework Output: {output_title}'
@@ -106,15 +104,12 @@ def render_output_banner(output_title, chapter3_expected, description):
         unsafe_allow_html=True
     )
 
-# ============================================================
-# DATA LOADING & CLEANING
-# ============================================================
+
 @st.cache_data(show_spinner=True)
 def load_flood_data():
-    # Tries to find the file locally or in standard streamlit paths
     search_paths = ['.', '/content/data', '/content', '/mount/src']
-    possible_filenames = ['FloodData.xlsx', 'FloodData.xls', 'FloodData.csv', 'flood_data.xlsx']
-    
+    possible_filenames = ['FloodData.xlsx', 'FloodData.xls', 'FloodData.csv', 'flood_data.xlsx', 'flood_data.csv', 'Flood Data.xlsx']
+
     filepath = None
     for path in search_paths:
         if not os.path.isdir(path): continue
@@ -125,30 +120,34 @@ def load_flood_data():
                 break
         if filepath: break
 
-    if filepath is None:
-        return None, "No flood dataset file found."
+    if filepath is None: return None, "No dataset found."
 
     try:
-        if filepath.lower().endswith('.csv'):
-            df = pd.read_csv(filepath)
-        else:
-            # Read without header first to handle the 2-row header issue
-            df = pd.read_excel(filepath, header=None)
+        df = pd.read_csv(filepath) if filepath.lower().endswith('.csv') else pd.read_excel(filepath, header=None)
         return df, f"Loaded: {os.path.basename(filepath)}"
     except Exception as e:
         return None, f"Error loading file: {e}"
 
-MONTH_MAP = {'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
-             'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12,
-             'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'jun': 6, 'jul': 7, 'aug': 8,
-             'sep': 9, 'sept': 9, 'oct': 10, 'nov': 11, 'dec': 12}
+
+def _resolve_column(df, candidates):
+    normalized = {str(c).lower().replace(' ', '').replace('_', '').replace('.', ''): c for c in df.columns}
+    for cand in candidates:
+        key = cand.lower().replace(' ', '').replace('_', '').replace('.', '')
+        if key in normalized: return normalized[key]
+    return None
+
+
+MONTH_MAP = {'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6, 'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12,
+             'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'jun': 6, 'jul': 7, 'aug': 8, 'sep': 9, 'sept': 9, 'oct': 10, 'nov': 11, 'dec': 12}
+
 
 def clean_text(value):
     if pd.isna(value): return np.nan
-    s = str(value).replace('\xa0', ' ').replace('\u200b', '').replace('\n', ' ')
+    s = str(value).replace('\xa0', ' ').replace('\u200b', '').replace('\t', ' ').replace('\n', ' ')
     s = re.sub(r'\s+', ' ', s).strip()
-    if s.lower() in {'', 'nan', 'none', 'n/a', '-', '--', '?'}: return np.nan
+    if s.lower() in {'', 'nan', 'none', 'n/a', '-', '--', '?', 'undefined'}: return np.nan
     return s
+
 
 def parse_month(value):
     s = clean_text(value)
@@ -159,11 +158,13 @@ def parse_month(value):
         return m if 1 <= m <= 12 else np.nan
     return MONTH_MAP.get(s, np.nan)
 
+
 def parse_number(value):
     s = clean_text(value)
     if pd.isna(s): return np.nan
     m = re.search(r'(\d+(?:\.\d+)?)', str(s))
     return float(m.group(1)) if m else np.nan
+
 
 def parse_damage(value):
     s = clean_text(value)
@@ -176,15 +177,13 @@ def parse_damage(value):
     try: return float(s)
     except: return np.nan
 
+
 @st.cache_data(show_spinner=True)
 def preprocess_data(raw):
     df = raw.copy()
-    
-    # Extract headers (Row 0)
     df.columns = [clean_text(c) for c in df.iloc[0]]
     df = df.iloc[1:].reset_index(drop=True)
     
-    # Deduplicate column names
     cols = pd.Series(df.columns)
     for dup in cols[cols.duplicated()].unique():
         cols[cols[cols == dup].index] = [f"{dup}_{i}" if i != 0 else dup for i in range(sum(cols == dup))]
@@ -200,11 +199,9 @@ def preprocess_data(raw):
     clean['Damage_Infrastructure'] = df.get('Damage Infrastructure', pd.Series()).apply(parse_damage)
     clean['Damage_Agriculture'] = df.get('Damage Agriculture', pd.Series()).apply(parse_damage)
 
-    # Drop missing
     clean = clean.dropna(subset=['Barangay'])
     clean = clean[clean['Barangay'] != 'Unknown']
 
-    # Derived categories
     MONTH_NAMES = {1:'January',2:'February',3:'March',4:'April',5:'May',6:'June',7:'July',8:'August',9:'September',10:'October',11:'November',12:'December'}
     clean['Month_Name'] = clean['Month_Num'].map(MONTH_NAMES)
     clean['Season'] = clean['Month_Num'].apply(lambda m: 'Dry Season' if m in (12,1,2,3,4,5) else ('Wet Season' if pd.notna(m) else 'Unknown'))
@@ -230,9 +227,7 @@ def preprocess_data(raw):
     clean['Severity'] = clean.apply(severity_level, axis=1)
     return clean
 
-# ============================================================
-# MAIN EXECUTION
-# ============================================================
+
 raw, load_message = load_flood_data()
 
 st.markdown('<div class="main-header">Bunawan Flood Analytics Dashboard</div>', unsafe_allow_html=True)
@@ -244,7 +239,6 @@ if raw is None:
 
 df = preprocess_data(raw)
 
-# Sidebar
 st.sidebar.header("Dashboard Controls")
 brgy_options = sorted(df['Barangay'].dropna().unique())
 barangay_filter = st.sidebar.multiselect("Filter by Barangay:", options=brgy_options, default=brgy_options)
@@ -261,7 +255,6 @@ min_confidence = st.sidebar.slider("Apriori Min Confidence", 0.1, 1.0, 0.3, 0.05
 
 df_f = df[(df['Barangay'].isin(barangay_filter)) & (df['Year'].between(year_range[0], year_range[1]))].copy()
 
-# Tabs
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Overview", "High-Risk Barangays", "Seasonal Patterns", "Severity Levels", "Association Rules", "Preparedness Plan"
 ])
@@ -291,7 +284,6 @@ with tab1:
 with tab2:
     render_output_banner("High-Risk Flood Barangays", "Identification of barangays exhibiting similar flood risk profiles using K-Means.", "Clustering based on damage and severity.")
     
-    # Aggregate
     agg = df_f.groupby('Barangay').agg(
         Total_Records=('Year', 'count'),
         Mean_Water_Level=('Water_Level_Ft', 'mean'),
@@ -306,7 +298,6 @@ with tab2:
         km = KMeans(n_clusters=k_clusters, random_state=42, n_init=10)
         agg['Cluster'] = km.fit_predict(X_scaled)
         
-        # CRITICAL FIX: Rank by Total Damage so Tier 1 has highest damage
         cluster_rank = agg.groupby('Cluster')['Total_Damage'].mean().sort_values(ascending=False)
         rank_map = {c: f"Tier {i+1}" for i, c in enumerate(cluster_rank.index)}
         agg['Risk_Tier'] = agg['Cluster'].map(rank_map)
@@ -349,7 +340,13 @@ with tab4:
         le = LabelEncoder()
         y_enc = le.fit_transform(ym)
         
-        X_train, X_test, y_train, y_test = train_test_split(Xm, y_enc, test_size=0.3, random_state=42, stratify=y_enc)
+        min_class_count = pd.Series(y_enc).value_counts().min()
+        stratify_arg = y_enc if min_class_count >= 2 else None
+        
+        X_train, X_test, y_train, y_test = train_test_split(
+            Xm, y_enc, test_size=0.3, random_state=42, stratify=stratify_arg
+        )
+        
         dt = DecisionTreeClassifier(max_depth=4, random_state=42).fit(X_train, y_train)
         y_pred = dt.predict(X_test)
         
@@ -367,7 +364,6 @@ with tab4:
 with tab5:
     render_output_banner("Association Rules (Apriori)", "Discovery of co-occurrence patterns among flood variables using Apriori.", "Rules evaluated by support, confidence, and lift.")
     
-    # Custom lightweight Apriori
     from itertools import combinations
     adf = df_f.dropna(subset=['Severity']).copy()
     transactions = []
@@ -404,8 +400,8 @@ with tab5:
 with tab6:
     render_output_banner("Data-Driven Preparedness Plan", "Consolidated evidence snapshots synthesized across all three data mining techniques.", "Findings-only summary.")
     
-    top_brgy = df_f['Barangay'].value_counts().index[0]
-    top_month = df_f['Month_Name'].value_counts().index[0]
+    top_brgy = df_f['Barangay'].value_counts().index[0] if not df_f.empty else "N/A"
+    top_month = df_f['Month_Name'].value_counts().index[0] if df_f['Month_Name'].notna().any() else "N/A"
     
     st.markdown(f"""
     <div class="finding-card">
