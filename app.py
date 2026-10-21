@@ -4,12 +4,11 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.express as px
-import plotly.graph_objects as go
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, precision_score, f1_score, confusion_matrix
+from sklearn.metrics import accuracy_score, precision_score, f1_score
 from mlxtend.frequent_patterns import apriori, association_rules
 
 st.set_page_config(layout="wide", page_title="Flood Analysis Dashboard", page_icon="🌊")
@@ -74,7 +73,6 @@ def severity_label(row):
 
 @st.cache_data(show_spinner=False)
 def load_and_clean(file_path):
-    # Added engine='openpyxl' to speed up loading on the cloud
     df = pd.read_excel(file_path, sheet_name=CONFIG["sheet_index"], engine='openpyxl')
     df.columns = [clean_text(c) for c in df.columns]
     df = df.dropna(how="all")
@@ -109,6 +107,7 @@ st.sidebar.metric("Affected Barangays", df[CONFIG["barangay_col"]].nunique())
 st.sidebar.metric("Families Affected", f"{int(df['families_num'].sum(skipna=True)):,}")
 st.sidebar.metric("Total Damage (PHP)", f"₱{int(df['damage_total_num'].sum(skipna=True)):,}")
 
+# Removed (Scikit-Learn) from the tab names
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "Seasonality", "K-Means Clustering", "Decision Tree", "Rules & Support"])
 
 with tab1:
@@ -141,7 +140,7 @@ with tab2:
         st.plotly_chart(px.bar(wcount, x="Weather System", y="Records", template="plotly_white"), use_container_width=True)
 
 with tab3:
-    st.header("K-Means Clustering (Scikit-Learn)")
+    st.header("K-Means Clustering")
     try:
         cluster_cols = ["water_level_num", "families_num", "damage_infra_num", "damage_agri_num"]
         cdf = df.dropna(subset=cluster_cols).copy()
@@ -149,7 +148,6 @@ with tab3:
         X = cdf[cluster_cols].values
         X_scaled = StandardScaler().fit_transform(X)
         
-        # Using Scikit-Learn KMeans as per manuscript
         km = KMeans(n_clusters=3, random_state=42, n_init=10)
         cdf["cluster"] = km.fit_predict(X_scaled)
         
@@ -162,7 +160,7 @@ with tab3:
             Avg_Water_Level=("water_level_num", "mean"),
             Avg_Damage=("damage_total_num", "mean")
         ).round(2).reset_index()
-        st.dataframe(prof)
+        st.dataframe(prof, hide_index=True)
         
         fig = px.scatter(cdf, x="water_level_num", y="damage_total_num", color="Cluster Profile", template="plotly_white")
         st.plotly_chart(fig, use_container_width=True)
@@ -170,7 +168,7 @@ with tab3:
         st.error(f"Clustering error: {e}")
 
 with tab4:
-    st.header("Decision Tree Classification (Scikit-Learn)")
+    st.header("Decision Tree Classification")
     try:
         model_cols = ["water_level_num", "families_num", "damage_infra_num", "damage_agri_num"]
         mdf = df.dropna(subset=model_cols).copy()
@@ -194,19 +192,19 @@ with tab4:
         st.error(f"Decision Tree error: {e}")
 
 with tab5:
-    st.header("Apriori Association Rules (MLxtend)")
+    st.header("Association Rules & Decision Support")
     try:
         adf = df.dropna(subset=["severity"]).copy().reset_index(drop=True)
         
-        # One-hot encoding for MLxtend
         trans = pd.DataFrame(index=adf.index)
         trans["Brgy_" + adf[CONFIG["barangay_col"]].astype(str)] = True
         trans["Severity_" + adf["severity"].astype(str)] = True
         trans = trans.fillna(False).astype(bool)
         
-        freq = apriori(trans, min_support=0.05, use_colnames=True)
+        # LOWERED THRESHOLDS so rules appear for this dataset size
+        freq = apriori(trans, min_support=0.02, use_colnames=True)
         if not freq.empty:
-            rules = association_rules(freq, metric="confidence", min_threshold=0.4)
+            rules = association_rules(freq, metric="confidence", min_threshold=0.3)
             rules = rules[rules["lift"] > 1.0]
             
             if not rules.empty:
