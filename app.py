@@ -3,14 +3,12 @@ import unicodedata
 import numpy as np
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
-import seaborn as sns
 from itertools import combinations
 from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, silhouette_score
+from sklearn.metrics import accuracy_score, precision_score, f1_score
 
 st.set_page_config(layout="wide", page_title="Flood Analysis Dashboard", page_icon="🌊")
 
@@ -25,8 +23,6 @@ CONFIG = {
     "month_col": "Month",
     "year_col": "Year",
     "sheet_index": 0,
-    "train_test_split": 0.3,
-    "random_state": 42,
 }
 
 MONTH_MAP = {"january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6, "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12}
@@ -43,7 +39,7 @@ def parse_number(v):
     s = clean_text(v).replace("ft.", "").replace("ft", "").replace("feet", "").replace(",", "").strip()
     if not s: return np.nan
     try: return float(s)
-    except ValueError:
+    except:
         m = re.search(r"-?\d+(?:\.\d+)?", s)
         return float(m.group(0)) if m else np.nan
 
@@ -73,32 +69,6 @@ def severity_label(row):
     if high_count >= 2: return "High"
     if (pd.isna(w) or w <= 2.0) and (pd.isna(f) or f < 50) and (pd.isna(d) or d < 100000): return "Low"
     return "Moderate"
-
-def simple_apriori(transactions, min_support=0.05, min_confidence=0.4):
-    n = len(transactions)
-    items = set(item for t in transactions for item in t)
-    support_counts = {frozenset([i]): sum(1 for t in transactions if i in t) for i in items}
-    L1 = {k: v/n for k, v in support_counts.items() if v/n >= min_support}
-    
-    rules = []
-    for k in range(2, 4):
-        itemsets = list(L1.keys())
-        candidates = [frozenset(c) for c in combinations(items, k)]
-        valid = {}
-        for c in candidates:
-            count = sum(1 for t in transactions if c.issubset(t))
-            sup = count / n
-            if sup >= min_support: valid[c] = sup
-        
-        for c, sup in valid.items():
-            for i in c:
-                ant = c - frozenset([i])
-                if ant in L1:
-                    conf = sup / L1[ant]
-                    if conf >= min_confidence:
-                        rules.append((ant, frozenset([i]), sup, conf, conf/L1[frozenset([i])]))
-        L1.update(valid)
-    return rules
 
 @st.cache_data(show_spinner=False)
 def load_and_clean(file_path):
@@ -166,21 +136,26 @@ with tab3:
     st.header("K-Means Clustering (Flood Profiles)")
     st.write("Groups similar flood events to identify distinct risk profiles.")
     try:
-        feat = df[["water_level_num", "families_num", "damage_infra_num", "damage_agri_num"]].fillna(0).to_numpy()
-        Xs = StandardScaler().fit_transform(feat)
+        # Drop NaNs specifically for clustering to prevent the math engine from freezing
+        cluster_cols = ["water_level_num", "families_num", "damage_infra_num", "damage_agri_num"]
+        cdf = df.dropna(subset=cluster_cols).copy()
         
-        km = KMeans(n_clusters=3, random_state=42, n_init=10).fit(Xs)
-        df["cluster"] = km.labels_
-        
-        st.success("Clustering complete. The data was grouped into 3 distinct risk profiles.")
-        prof = df.groupby("cluster").agg(
-            Events=("cluster", "size"),
-            Avg_Water_Level=("water_level_num", "mean"),
-            Avg_Families=("families_num", "mean"),
-            Avg_Damage=("damage_total_num", "mean")
-        ).round(2)
-        st.dataframe(prof)
-        st.bar_chart(df["cluster"].value_counts())
+        if len(cdf) > 5:
+            Xs = StandardScaler().fit_transform(cdf[cluster_cols].values)
+            km = KMeans(n_clusters=3, random_state=42, n_init=5).fit(Xs)
+            cdf["cluster"] = km.labels_
+            
+            st.success("Clustering complete. The data was grouped into 3 distinct risk profiles.")
+            prof = cdf.groupby("cluster").agg(
+                Events=("cluster", "size"),
+                Avg_Water_Level=("water_level_num", "mean"),
+                Avg_Families=("families_num", "mean"),
+                Avg_Damage=("damage_total_num", "mean")
+            ).round(2)
+            st.dataframe(prof)
+            st.bar_chart(cdf["cluster"].value_counts())
+        else:
+            st.warning("Not enough complete data to run clustering.")
     except Exception as e:
         st.error(f"Clustering error: {e}")
 
@@ -189,10 +164,11 @@ with tab4:
     st.write("Trains a model to predict severity based on damage and water levels.")
     try:
         model_cols = ["water_level_num", "families_num", "damage_infra_num", "damage_agri_num"]
+        mdf = df.dropna(subset=model_cols).copy()
         
-        # Explicitly convert to float numpy arrays to fix the scikit-learn bug
-        Xm = df[model_cols].fillna(0).to_numpy(dtype=float)
-        ym = df["severity"].to_numpy()
+        # Convert to pure Python lists/float arrays to bypass scikit-learn Cython bugs
+        Xm = np.array(mdf[model_cols].values, dtype=float)
+        ym = np.array(mdf["severity"].values, dtype=str)
         
         X_train, X_test, y_train, y_test = train_test_split(Xm, ym, test_size=0.3, random_state=42)
         dt = DecisionTreeClassifier(max_depth=4, random_state=42).fit(X_train, y_train)
@@ -214,28 +190,41 @@ with tab5:
     st.write("Generates 'If-Then' rules based on historical data to guide preparedness.")
     
     try:
+        # Simplified, highly optimized pure-python Apriori
         adf = df.dropna(subset=["severity"]).copy()
         transactions = []
         for _, row in adf.iterrows():
-            t = {f"Brgy_{row[CONFIG['barangay_col']]}", f"Severity_{row['severity']}"}
-            if pd.notna(row["month_num"]):
-                t.add(f"Month_{pd.Timestamp(2024, int(row['month_num']), 1).strftime('%B')}")
+            t = [f"Brgy_{row[CONFIG['barangay_col']]}", f"Severity_{row['severity']}"]
             transactions.append(t)
             
-        rules = simple_apriori(transactions, min_support=0.05, min_confidence=0.4)
-        rules = [r for r in rules if r[4] > 1.0]
-        rules.sort(key=lambda x: x[3], reverse=True)
+        rules = []
+        n = len(transactions)
+        
+        # Only check 2-item combinations to prevent cloud server timeout
+        all_items = set(item for t in transactions for item in t)
+        for item1, item2 in combinations(all_items, 2):
+            count_both = sum(1 for t in transactions if item1 in t and item2 in t)
+            count_1 = sum(1 for t in transactions if item1 in t)
+            count_2 = sum(1 for t in transactions if item2 in t)
+            
+            if count_both > 0 and count_1 > 0 and count_2 > 0:
+                support = count_both / n
+                conf_1_2 = count_both / count_1
+                lift = conf_1_2 / (count_2 / n)
+                
+                if support > 0.05 and conf_1_2 > 0.4 and lift > 1.0:
+                    rules.append({"If (Antecedent)": item1, "Then (Consequent)": item2, "Confidence": f"{conf_1_2*100:.1f}%", "Lift": round(lift, 2)})
+                    
+        rules.sort(key=lambda x: float(x["Confidence"].replace('%','')), reverse=True)
         
         if rules:
-            rule_data = [{"If (Antecedent)": ", ".join(list(r[0])), "Then (Consequent)": ", ".join(list(r[1])), "Confidence": f"{r[3]*100:.1f}%", "Lift": round(r[4], 2)} for r in rules[:15]]
-            st.dataframe(pd.DataFrame(rule_data), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rules[:15]), use_container_width=True, hide_index=True)
         else:
             st.info("No strong rules met the thresholds.")
             
         st.divider()
         st.subheader("Dynamic Recommendations (Obj 3)")
         
-        # Safely grab the top values for the recommendation text
         high_brgy = df[df['severity']=='High'][CONFIG['barangay_col']].value_counts()
         top_high_brgy = high_brgy.index[0] if not high_brgy.empty else "N/A"
         
