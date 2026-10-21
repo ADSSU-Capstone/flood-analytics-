@@ -3,13 +3,12 @@ import unicodedata
 import numpy as np
 import pandas as pd
 import streamlit as st
-import plotly.express as px
+from itertools import combinations
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, f1_score
-from mlxtend.frequent_patterns import apriori, association_rules
 
 st.set_page_config(layout="wide", page_title="Flood Analysis Dashboard", page_icon="🌊")
 
@@ -107,36 +106,29 @@ st.sidebar.metric("Affected Barangays", df[CONFIG["barangay_col"]].nunique())
 st.sidebar.metric("Families Affected", f"{int(df['families_num'].sum(skipna=True)):,}")
 st.sidebar.metric("Total Damage (PHP)", f"₱{int(df['damage_total_num'].sum(skipna=True)):,}")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "Seasonality", "K-Means Clustering", "Decision Tree", "Rules & Support"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Overview", "Seasonality", "K-Means", "Decision Tree", "Rules & Support"])
 
 with tab1:
     st.header("Flood Overview")
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Records by Barangay")
-        bc = df[CONFIG["barangay_col"]].value_counts().reset_index()
-        bc.columns = ["Barangay", "Records"]
-        st.plotly_chart(px.bar(bc, x="Barangay", y="Records", template="plotly_white"), use_container_width=True)
+        st.bar_chart(df[CONFIG["barangay_col"]].value_counts())
     with col2:
         st.subheader("Severity Distribution")
-        sev = df["severity"].value_counts().reindex(["Low", "Moderate", "High"]).fillna(0).reset_index()
-        sev.columns = ["Severity", "Records"]
-        st.plotly_chart(px.pie(sev, names="Severity", values="Records", template="plotly_white"), use_container_width=True)
+        st.bar_chart(df["severity"].value_counts())
 
 with tab2:
     st.header("Seasonality & Weather")
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("Flood Frequency by Month")
-        mcount = df["month_num"].dropna().astype(int).value_counts().sort_index().reset_index()
-        mcount.columns = ["Month_Num", "Records"]
-        mcount["Month"] = mcount["Month_Num"].apply(lambda m: pd.Timestamp(2024, m, 1).strftime("%B"))
-        st.plotly_chart(px.bar(mcount, x="Month", y="Records", template="plotly_white"), use_container_width=True)
+        mcount = df["month_num"].dropna().astype(int).value_counts().sort_index()
+        mcount.index = [pd.Timestamp(2024, m, 1).strftime("%B") for m in mcount.index]
+        st.bar_chart(mcount)
     with col2:
         st.subheader("Weather System Frequency")
-        wcount = df[CONFIG["cause_col"]].value_counts().reset_index()
-        wcount.columns = ["Weather System", "Records"]
-        st.plotly_chart(px.bar(wcount, x="Weather System", y="Records", template="plotly_white"), use_container_width=True)
+        st.bar_chart(df[CONFIG["cause_col"]].value_counts())
 
 with tab3:
     st.header("K-Means Clustering")
@@ -161,8 +153,7 @@ with tab3:
         ).round(2).reset_index()
         st.dataframe(prof, hide_index=True)
         
-        fig = px.scatter(cdf, x="water_level_num", y="damage_total_num", color="Cluster Profile", template="plotly_white")
-        st.plotly_chart(fig, use_container_width=True)
+        st.bar_chart(cdf["Cluster Profile"].value_counts())
     except Exception as e:
         st.error(f"Clustering error: {e}")
 
@@ -184,42 +175,45 @@ with tab4:
         col2.metric("Precision", f"{precision_score(y_test, y_pred, average='weighted', zero_division=0):.2f}")
         col3.metric("F1 Score", f"{f1_score(y_test, y_pred, average='weighted', zero_division=0):.2f}")
         
-        imp = pd.Series(dt.feature_importances_, index=model_cols).reset_index()
-        imp.columns = ["Feature", "Importance"]
-        st.plotly_chart(px.bar(imp, x="Feature", y="Importance", template="plotly_white"), use_container_width=True)
+        imp = pd.Series(dt.feature_importances_, index=model_cols)
+        st.bar_chart(imp)
     except Exception as e:
         st.error(f"Decision Tree Error: {e}")
 
 with tab5:
     st.header("Association Rules & Decision Support")
+    
     try:
+        # Custom lightweight Apriori to prevent cloud crashes
         adf = df.dropna(subset=["severity"]).copy().reset_index(drop=True)
-        
-        trans = pd.DataFrame(index=adf.index)
-        trans["Brgy_" + adf[CONFIG["barangay_col"]].astype(str)] = True
-        trans["Severity_" + adf["severity"].astype(str)] = True
-        
-        # Include Cause to ensure we get robust rules without crashing
-        trans["Cause_" + adf[CONFIG["cause_col"]].astype(str)] = True
-        
-        trans = trans.fillna(False).astype(bool)
-        
-        # min_support 0.01 means combination must appear at least 2 times
-        freq = apriori(trans, min_support=0.01, use_colnames=True)
-        
-        if not freq.empty:
-            # Use min_threshold 0.1 to safely calculate confidence
-            rules = association_rules(freq, metric="confidence", min_threshold=0.1)
-            rules = rules[rules["lift"] > 1.0]
+        transactions = []
+        for _, row in adf.iterrows():
+            t = [f"Brgy_{row[CONFIG['barangay_col']]}", f"Severity_{row['severity']}", f"Cause_{row[CONFIG['cause_col']]}"]
+            transactions.append(t)
             
-            if not rules.empty:
-                rules["Antecedent"] = rules["antecedents"].apply(lambda s: ", ".join(sorted(s)))
-                rules["Consequent"] = rules["consequents"].apply(lambda s: ", ".join(sorted(s)))
-                st.dataframe(rules[["Antecedent", "Consequent", "support", "confidence", "lift"]].sort_values("lift", ascending=False).head(15), hide_index=True)
-            else:
-                st.info("No strong rules found.")
+        rules = []
+        n = len(transactions)
+        all_items = set(item for t in transactions for item in t)
+        
+        for item1, item2 in combinations(all_items, 2):
+            count_both = sum(1 for t in transactions if item1 in t and item2 in t)
+            count_1 = sum(1 for t in transactions if item1 in t)
+            count_2 = sum(1 for t in transactions if item2 in t)
+            
+            if count_both >= 2 and count_1 > 0 and count_2 > 0:
+                support = count_both / n
+                conf = count_both / count_1
+                lift = conf / (count_2 / n)
+                
+                if conf > 0.1 and lift > 1.0:
+                    rules.append({"If (Antecedent)": item1, "Then (Consequent)": item2, "Support": round(support, 3), "Confidence": round(conf, 3), "Lift": round(lift, 2)})
+                    
+        rules.sort(key=lambda x: x["Lift"], reverse=True)
+        
+        if rules:
+            st.dataframe(pd.DataFrame(rules[:15]), hide_index=True)
         else:
-            st.info("No frequent itemsets found.")
+            st.info("No strong rules found.")
             
         st.divider()
         st.subheader("Dynamic Recommendations (Obj 3)")
