@@ -8,7 +8,7 @@ import seaborn as sns
 from itertools import combinations
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
-from sklearn.tree import DecisionTreeClassifier, plot_tree
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, f1_score, confusion_matrix
 
@@ -203,17 +203,11 @@ with tab4:
         with col2:
             st.subheader("Confusion Matrix")
             cm = confusion_matrix(y_test, y_pred, labels=np.unique(ym))
-            fig, ax = plt.subplots()
+            fig, ax = plt.subplots(figsize=(6, 4))
             sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=np.unique(ym), yticklabels=np.unique(ym), ax=ax)
             ax.set_ylabel('Actual')
             ax.set_xlabel('Predicted')
             st.pyplot(fig)
-            
-        st.subheader("Decision Tree Logic")
-        fig_tree, ax_tree = plt.subplots(figsize=(15, 6))
-        plot_tree(dt, feature_names=model_cols, class_names=np.unique(ym), filled=True, ax=ax_tree, fontsize=10)
-        st.pyplot(fig_tree)
-        
     except Exception as e:
         st.error(f"Decision Tree error: {e}")
 
@@ -254,7 +248,6 @@ with tab5:
             
         st.divider()
         st.subheader("High-Risk Barangay Priority Chart")
-        # NEW CHART: Top 5 high severity barangays for recommendation proof
         high_brgy = df[df['severity']=='High'][CONFIG['barangay_col']].value_counts().head(5)
         st.bar_chart(high_brgy)
         
