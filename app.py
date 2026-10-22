@@ -28,6 +28,21 @@ st.set_page_config(
 st.markdown("""
 <style>
     .stApp { background-color: #f8fafc; }
+    .dashboard-title {
+        text-align: center;
+        color: #1e3a8a;
+        font-size: 2.2rem;
+        font-weight: 700;
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
+        letter-spacing: 0.5px;
+    }
+    .dashboard-subtitle {
+        text-align: center;
+        color: #64748b;
+        font-size: 1rem;
+        margin-bottom: 2rem;
+    }
     .stTabs [data-baseweb="tab-list"] { gap: 8px; }
     .stTabs [data-baseweb="tab"] {
         background-color: #e2e8f0;
@@ -65,6 +80,9 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+st.markdown('<div class="dashboard-title">Flood Analytics Dashboard</div>', unsafe_allow_html=True)
+st.markdown('<div class="dashboard-subtitle">Historical Flood Records Analysis</div>', unsafe_allow_html=True)
 
 def clean_text(value):
     if pd.isna(value): return np.nan
